@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NCA + LPPN</title>
+    <link rel="stylesheet" href="./src/main.css">
+    <script type="importmap">
+      {
+        "imports": {
+          "gl-matrix": "https://esm.sh/gl-matrix@3.4.3"
+        }
+      }
+    </script>
+    <script defer type="module" src="./src/main.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div class="hud">
+      <header class="topbar">
+        <div class="readouts">
+          <div class="readout">
+            <span class="readout-label">FPS</span>
+            <span id="fps" class="readout-value">0</span>
+          </div>
+          <div class="readout">
+            <span class="readout-label">STEP</span>
+            <span id="step-count" class="readout-value">0</span>
+          </div>
+          <div class="readout">
+            <span class="readout-label">VOXELS</span>
+            <span id="voxel-count" class="readout-value">0</span>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <button id="toggle-play" class="tab-button" type="button">STOP</button>
+          <button id="step-button" class="tab-button" type="button">STEP</button>
+          <button id="info-toggle" class="tab-button" type="button" aria-expanded="false">INFO</button>
+
+          <label class="tab-select">
+            <span class="tab-select-label">Models</span>
+            <select id="model-select"></select>
+          </label>
+
+          <button id="controls-toggle" class="tab-button" type="button" aria-expanded="true">CONTROLS</button>
+        </div>
+      </header>
+
+      <section id="controls-panel" class="controls-panel">
+        <div class="controls-grid">
+          <div class="info-row">
+            <span class="info-label">Model</span>
+            <span id="info-model-name" class="info-value">-</span>
+          </div>
+
+          <label class="control-group" for="scale-range">
+            <span class="control-label">Scale</span>
+            <div class="control-input-row">
+              <input id="scale-range" class="control-range" type="range" min="0.25" max="8" step="0.25" value="1">
+              <span id="scale-value" class="control-value">1.00x</span>
+            </div>
+          </label>
+
+          <label class="control-group" for="damage-radius-range">
+            <span class="control-label">Damage Radius</span>
+            <div class="control-input-row">
+              <input id="damage-radius-range" class="control-range" type="range" min="1" max="24" step="0.5" value="3">
+              <span id="damage-radius-value" class="control-value">3.0</span>
+            </div>
+          </label>
+
+          <label class="control-group" for="rate-range">
+            <span class="control-label">Simulation Rate</span>
+            <div class="control-input-row">
+              <input id="rate-range" class="control-range" type="range" min="0" max="1.5" step="0.25" value="1">
+              <span id="rate-value" class="control-value">1.00x</span>
+            </div>
+          </label>
+
+          <label class="control-group" for="section-x-range">
+            <span class="control-label">Cross Section X</span>
+            <div class="control-input-row">
+              <input id="section-x-range" class="control-range" type="range" min="0" max="1" step="1" value="1">
+              <span id="section-x-value" class="control-value">1</span>
+            </div>
+          </label>
+
+          <label class="control-group" for="section-y-range">
+            <span class="control-label">Cross Section Y</span>
+            <div class="control-input-row">
+              <input id="section-y-range" class="control-range" type="range" min="0" max="1" step="1" value="1">
+              <span id="section-y-value" class="control-value">1</span>
+            </div>
+          </label>
+
+          <label class="control-group" for="section-z-range">
+            <span class="control-label">Cross Section Z</span>
+            <div class="control-input-row">
+              <input id="section-z-range" class="control-range" type="range" min="0" max="1" step="1" value="1">
+              <span id="section-z-value" class="control-value">1</span>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <aside id="info-panel" class="info-panel" aria-hidden="true">
+        <div class="info-panel-header">
+          <h2 id="info-title" class="info-panel-title">Model</h2>
+          <button id="info-close" class="info-close-button" type="button">Close</button>
+        </div>
+
+        <div class="info-panel-body">
+          <div class="info-image-grid">
+            <figure class="info-figure">
+              <div class="info-image-frame">
+                <img id="info-original-image" class="info-image" alt="Original model preview">
+                <div id="info-original-placeholder" class="info-image-placeholder">Target preview unavailable</div>
+              </div>
+              <figcaption class="info-caption">Target</figcaption>
+            </figure>
+
+            <figure class="info-figure">
+              <div class="info-image-frame">
+                <img id="info-coarse-image" class="info-image" alt="Coarse model preview">
+                <div id="info-coarse-placeholder" class="info-image-placeholder">Coarse preview unavailable</div>
+              </div>
+              <figcaption class="info-caption">Coarse</figcaption>
+            </figure>
+          </div>
+
+          <div id="info-table-wrap"></div>
+        </div>
+      </aside>
+    </div>
+  </body>
+</html>

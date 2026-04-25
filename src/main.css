@@ -1,0 +1,442 @@
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.24), transparent 45%),
+    linear-gradient(180deg, #d8f0ff 0%, #b6dcff 100%);
+  color: #f4fbff;
+  font-family: monospace;
+}
+
+body {
+  touch-action: none;
+  position: relative;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  z-index: 0;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  position: relative;
+  z-index: 0;
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.topbar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 0;
+  background: rgba(108, 176, 221, 0.72);
+  border-bottom: 2px solid rgba(236, 250, 255, 0.55);
+  box-shadow: 0 12px 40px rgba(44, 101, 145, 0.16);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  position: relative;
+  z-index: 11;
+}
+
+.readouts,
+.toolbar {
+  display: flex;
+  align-items: stretch;
+}
+
+.readout,
+.tab-button,
+.tab-select {
+  min-height: 3.5rem;
+  border-right: 2px solid rgba(236, 250, 255, 0.42);
+}
+
+.readout {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0 1.35rem;
+  color: #eefaff;
+  text-shadow: 0 1px 0 rgba(71, 127, 171, 0.36);
+}
+
+.readout-label,
+.tab-select-label {
+  font-size: 0.86rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.readout-value {
+  font-size: 1.5rem;
+  line-height: 1;
+  letter-spacing: 0.05em;
+}
+
+.toolbar {
+  margin-left: auto;
+}
+
+.tab-button,
+.tab-select {
+  position: relative;
+  background: rgba(233, 249, 255, 0.75);
+  color: #2d6d97;
+  box-shadow: inset 0 -3px 0 rgba(120, 187, 228, 0.3);
+}
+
+.tab-button {
+  padding: 0 1.15rem;
+  border-top: 0;
+  border-left: 2px solid rgba(236, 250, 255, 0.42);
+  border-right: 2px solid rgba(236, 250, 255, 0.42);
+  border-bottom: 0;
+  font: inherit;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 120ms ease, transform 120ms ease, color 120ms ease;
+}
+
+.tab-button:hover,
+.tab-button:focus-visible {
+  background: rgba(247, 253, 255, 0.9);
+  color: #25597a;
+}
+
+.tab-button:active,
+.tab-button.is-active {
+  background: rgba(207, 240, 255, 0.95);
+  box-shadow: inset 0 3px 0 rgba(120, 187, 228, 0.4);
+}
+
+.tab-select {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0 1rem 0 1.15rem;
+  pointer-events: auto;
+}
+
+.tab-select select {
+  min-width: 9rem;
+  padding: 0.45rem 2rem 0.45rem 0.75rem;
+  border: 1px solid rgba(92, 150, 191, 0.24);
+  background: rgba(255, 255, 255, 0.7);
+  color: #25597a;
+  font: inherit;
+  font-size: 0.98rem;
+  appearance: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.controls-panel {
+  width: min(34rem, calc(100vw - 2rem));
+  margin: 1rem;
+  padding: 1rem 1.1rem 1.05rem;
+  background: rgba(233, 249, 255, 0.78);
+  border: 2px solid rgba(236, 250, 255, 0.55);
+  box-shadow: 0 12px 32px rgba(44, 101, 145, 0.12);
+  color: #1f5373;
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+  transition: opacity 160ms ease, transform 160ms ease;
+  position: relative;
+  z-index: 11;
+}
+
+.controls-grid {
+  display: grid;
+  gap: 0.9rem;
+  margin-bottom: 0.95rem;
+}
+
+.info-row,
+.control-group {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.info-row {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  padding: 0.7rem 0.8rem;
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(126, 185, 221, 0.28);
+}
+
+.info-label,
+.control-label {
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #5f90af;
+}
+
+.info-value {
+  justify-self: end;
+  color: #1a4f70;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.control-group {
+  padding: 0.7rem 0.8rem;
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(126, 185, 221, 0.28);
+}
+
+.control-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.control-range {
+  width: 100%;
+  accent-color: #5ca9d8;
+}
+
+.control-value {
+  min-width: 3.9rem;
+  color: #1d5678;
+  font-size: 0.95rem;
+  text-align: right;
+}
+
+.info-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: clamp(24rem, 30vw, 34rem);
+  height: 100vh;
+  background: rgba(229, 245, 255, 0.96);
+  border-left: 2px solid rgba(236, 250, 255, 0.7);
+  box-shadow: -18px 0 40px rgba(44, 101, 145, 0.16);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+  transform: translateX(100%);
+  transition: transform 180ms ease;
+  z-index: 12;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.info-panel.is-open {
+  transform: translateX(0);
+}
+
+.info-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1rem 0.9rem;
+  border-bottom: 1px solid rgba(126, 185, 221, 0.28);
+}
+
+.info-panel-title {
+  margin: 0;
+  color: #174966;
+  font-size: 1.7rem;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.info-close-button {
+  border: 1px solid rgba(126, 185, 221, 0.35);
+  background: rgba(255, 255, 255, 0.65);
+  color: #25597a;
+  padding: 0.45rem 0.75rem;
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.info-panel-body {
+  overflow-y: auto;
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.info-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.info-figure {
+  margin: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.info-image-frame {
+  aspect-ratio: 1 / 1;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(126, 185, 221, 0.28);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.info-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+}
+
+.info-image.is-visible {
+  display: block;
+}
+
+.info-image-placeholder {
+  padding: 0.8rem;
+  text-align: center;
+  color: #5b88a3;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.info-image-placeholder.is-hidden {
+  display: none;
+}
+
+.info-caption {
+  color: #25597a;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.info-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: rgba(255, 255, 255, 0.46);
+  border: 1px solid rgba(126, 185, 221, 0.28);
+}
+
+.info-table thead th {
+  padding: 0.8rem 0.7rem;
+  color: #5f90af;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(126, 185, 221, 0.28);
+}
+
+.info-table tbody th,
+.info-table tbody td {
+  padding: 0.68rem 0.7rem;
+  border-bottom: 1px solid rgba(126, 185, 221, 0.18);
+}
+
+.info-table tbody th {
+  color: #174966;
+}
+
+.info-table tbody td {
+  color: #1f5373;
+  text-align: right;
+}
+
+.info-section-cell {
+  width: 3.75rem;
+  color: #5f90af;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-right: 1px solid rgba(126, 185, 221, 0.18);
+}
+
+.info-section-start th,
+.info-section-start td {
+  border-top: 1px solid rgba(126, 185, 221, 0.32);
+}
+
+.controls-panel.is-collapsed {
+  opacity: 0;
+  transform: translateY(-0.5rem);
+  pointer-events: none;
+}
+
+.status-line {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #174966;
+}
+
+.status-details {
+  margin: 0;
+  color: #225d82;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 0.92rem;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .readouts,
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .toolbar {
+    border-top: 2px solid rgba(236, 250, 255, 0.42);
+  }
+
+  .readout,
+  .tab-button,
+  .tab-select {
+    flex: 1 1 auto;
+    min-height: 3.1rem;
+  }
+
+  .tab-select {
+    justify-content: space-between;
+  }
+
+  .controls-panel {
+    width: auto;
+  }
+
+  .info-panel {
+    width: min(100vw, 28rem);
+  }
+
+  .info-image-grid {
+    grid-template-columns: 1fr;
+  }
+}
