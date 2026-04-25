@@ -8,6 +8,8 @@ struct Camera {
   view: mat4x4<f32>,
 }
 
+const OPACITY_HIT_THRESHOLD: f32 = 0.6;
+
 fn getVoxel(pos: vec3<u32>) -> u32 {
   let u32Size = vec3<u32>(size.w, size.y, size.z);
   return (data[pos.z * u32Size.x * u32Size.y + pos.y * u32Size.x + (pos.x / 4)] >> ((pos.x % 4) * 8)) & 0xFF;
@@ -171,6 +173,7 @@ fn rayVoxelIntersection(
 
   *position = rayStart;
   var iterations: u32;
+  var accumulatedAlpha: f32 = 0.0;
   while (
     currentX != endX
     || currentY != endY
@@ -187,7 +190,12 @@ fn rayVoxelIntersection(
     );
     *value = getVoxel(*voxel);
     if (*value > 0) {
-      return true;
+      let voxelAlpha = f32(*value) / 255.0;
+      accumulatedAlpha = accumulatedAlpha + (1.0 - accumulatedAlpha) * voxelAlpha;
+      if (accumulatedAlpha >= OPACITY_HIT_THRESHOLD) {
+        *value = u32(round(accumulatedAlpha * 255.0));
+        return true;
+      }
     }
 
     if (tMaxX < tMaxY && tMaxX < tMaxZ) {

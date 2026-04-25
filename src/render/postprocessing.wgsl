@@ -2,17 +2,33 @@
 @group(0) @binding(1) var dataTexture: texture_2d<f32>;
 
 const edgeColor : vec3<f32> = vec3<f32>(0, 0, 0);
-const edgeIntensity : f32 = 0.3;
-const depthScale : f32 = 0.3;
-const normalScale : f32 = 0.3;
+const edgeIntensity : f32 = 0.18;
+const depthScale : f32 = 0.18;
+const normalScale : f32 = 0.18;
+const backgroundDepth : f32 = 9999.0;
 const offset : vec3<i32> = vec3<i32>(1, 1, 0);
 
-fn getEdge(pixel : vec2<i32>) -> f32 {
-  let pixelCenter : vec4<f32> = textureLoad(dataTexture, pixel, 0);
-  let pixelLeft : vec4<f32> = textureLoad(dataTexture, pixel - offset.xz, 0);
-  let pixelRight : vec4<f32> = textureLoad(dataTexture, pixel + offset.xz, 0);
-  let pixelUp : vec4<f32> = textureLoad(dataTexture, pixel + offset.zy, 0);
-  let pixelDown : vec4<f32> = textureLoad(dataTexture, pixel - offset.zy, 0);
+fn isBackground(sample: vec4<f32>) -> bool {
+  return sample.w >= backgroundDepth;
+}
+
+fn clampPixel(pixel: vec2<i32>, size: vec2<i32>) -> vec2<i32> {
+  return clamp(pixel, vec2<i32>(0), size - vec2<i32>(1));
+}
+
+fn getDataSample(pixel: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+  return textureLoad(dataTexture, clampPixel(pixel, size), 0);
+}
+
+fn getEdge(pixel : vec2<i32>, size: vec2<i32>) -> f32 {
+  let pixelCenter : vec4<f32> = getDataSample(pixel, size);
+  if (isBackground(pixelCenter)) {
+    return 0.0;
+  }
+  let pixelLeft : vec4<f32> = getDataSample(pixel - offset.xz, size);
+  let pixelRight : vec4<f32> = getDataSample(pixel + offset.xz, size);
+  let pixelUp : vec4<f32> = getDataSample(pixel + offset.zy, size);
+  let pixelDown : vec4<f32> = getDataSample(pixel - offset.zy, size);
   let edge : vec4<f32> = (
     abs(pixelLeft    - pixelCenter)
     + abs(pixelRight - pixelCenter) 
@@ -43,10 +59,11 @@ fn linearTosRGB(linear: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment fn fragmentMain(@builtin(position) uv: vec4<f32>) -> @location(0) vec4<f32> {
-  let pixel = vec2<i32>(floor(uv.xy));
-  let color = textureLoad(colorTexture, pixel, 0).xyz;
-  let depth = textureLoad(dataTexture, pixel, 0).w;
+  let sourceSizeU = textureDimensions(dataTexture);
+  let sourceSize = vec2<i32>(sourceSizeU);
+  let sourcePixel = clampPixel(vec2<i32>(floor(uv.xy)), sourceSize);
+  let color = textureLoad(colorTexture, sourcePixel, 0).xyz;
   return vec4<f32>(linearTosRGB(
-    mix(color, edgeColor, getEdge(pixel) * edgeIntensity)
+    mix(color, edgeColor, getEdge(sourcePixel, sourceSize) * edgeIntensity)
   ), 1);
 }
