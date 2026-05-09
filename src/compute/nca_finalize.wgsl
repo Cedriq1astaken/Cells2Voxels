@@ -25,7 +25,7 @@ fn clampedCoord(value: i32) -> u32 {
 }
 
 fn isPrevAlive(center: vec3<u32>) -> bool {
-  var value = -1.0;
+  var value: ComputeScalar = asScalar(-1.0);
   for (var z: i32 = -1; z <= 1; z++) {
     for (var y: i32 = -1; y <= 1; y++) {
       for (var x: i32 = -1; x <= 1; x++) {
@@ -34,15 +34,15 @@ fn isPrevAlive(center: vec3<u32>) -> bool {
           clampedCoord(i32(center.y) + y),
           clampedCoord(i32(center.z) + z)
         );
-        value = max(value, statePrev[stateIndex(sample, alphaChannel())]);
+        value = max(value, asScalar(statePrev[stateIndex(sample, alphaChannel())]));
       }
     }
   }
-  return value > 0.1;
+  return scalarToF32(value) > 0.1;
 }
 
 fn isRawAlive(center: vec3<u32>) -> bool {
-  var value = -1.0;
+  var value: ComputeScalar = asScalar(-1.0);
   for (var z: i32 = -1; z <= 1; z++) {
     for (var y: i32 = -1; y <= 1; y++) {
       for (var x: i32 = -1; x <= 1; x++) {
@@ -51,11 +51,11 @@ fn isRawAlive(center: vec3<u32>) -> bool {
           clampedCoord(i32(center.y) + y),
           clampedCoord(i32(center.z) + z)
         );
-        value = max(value, stateRaw[stateIndex(sample, alphaChannel())]);
+        value = max(value, asScalar(stateRaw[stateIndex(sample, alphaChannel())]));
       }
     }
   }
-  return value > 0.1;
+  return scalarToF32(value) > 0.1;
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -67,10 +67,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   let preAlive = isPrevAlive(id);
   let postAlive = isRawAlive(id);
-  let lifeMask = select(0.0, 1.0, preAlive && postAlive);
+  let lifeMask = select(asScalar(0.0), asScalar(1.0), preAlive && postAlive);
 
   for (var channel: u32 = 0u; channel < channels(); channel++) {
     let index = stateIndex(id, channel);
-    stateOut[index] = stateRaw[index] * lifeMask;
+    stateOut[index] = scalarToF32(asScalar(stateRaw[index]) * lifeMask);
   }
 }

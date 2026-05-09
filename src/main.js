@@ -8,8 +8,12 @@ const SCALE_STORAGE_KEY = 'nca-scale-multiplier-v1';
 const NCA_SPEED_STORAGE_KEY = 'nca-update-rate-v1';
 const LPPN_SPEED_STORAGE_KEY = 'lppn-update-rate-v1';
 const MODEL_STORAGE_KEY = 'nca-model-name-v1';
+const PRECISION_STORAGE_KEY = 'nca-precision-v1';
+const DISPLAY_CHANNEL_STORAGE_KEY = 'nca-display-channel-v1';
 const MODEL_NAME = 'Globe';
 const SCALE_MULTIPLIER = null;
+const MIN_SCALE_MULTIPLIER = 0.25;
+const MAX_SCALE_MULTIPLIER = 10.0;
 const UPDATE_RATE = 1.0;
 const LPPN_RATE = 1.0;
 const CLICK_DAMAGE_DRAG_THRESHOLD = 6;
@@ -43,12 +47,16 @@ const saveOrientation = (volume) => {
   );
 };
 
+const clampScaleMultiplier = (value) => {
+  return Math.min(MAX_SCALE_MULTIPLIER, Math.max(MIN_SCALE_MULTIPLIER, value));
+};
+
 const loadScaleMultiplier = () => {
   const urlScale = new URLSearchParams(window.location.search).get('scale');
   if (urlScale) {
     const parsed = Number(urlScale);
     if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
+      return clampScaleMultiplier(parsed);
     }
   }
 
@@ -59,13 +67,13 @@ const loadScaleMultiplier = () => {
     }
     const parsed = Number(stored);
     if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
+      return clampScaleMultiplier(parsed);
     }
   } catch {
     return SCALE_MULTIPLIER ?? undefined;
   }
 
-  return SCALE_MULTIPLIER ?? undefined;
+  return SCALE_MULTIPLIER == null ? undefined : clampScaleMultiplier(SCALE_MULTIPLIER);
 };
 
 const saveScaleMultiplier = (value) => {
@@ -134,9 +142,75 @@ const saveModelName = (value) => {
   window.localStorage.setItem(MODEL_STORAGE_KEY, value);
 };
 
+const normalizeDisplayChannel = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return Math.floor(parsed);
+};
+
+const loadDisplayChannel = () => {
+  const urlChannel = new URLSearchParams(window.location.search).get('channel');
+  if (urlChannel) {
+    return normalizeDisplayChannel(urlChannel);
+  }
+
+  try {
+    const stored = window.localStorage.getItem(DISPLAY_CHANNEL_STORAGE_KEY);
+    if (stored) {
+      return normalizeDisplayChannel(stored);
+    }
+  } catch {
+    return 0;
+  }
+
+  return 0;
+};
+
+const saveDisplayChannel = (value) => {
+  window.localStorage.setItem(DISPLAY_CHANNEL_STORAGE_KEY, String(normalizeDisplayChannel(value)));
+};
+
+const normalizePrecisionMode = (value) => (value === 'f16' ? 'f16' : 'f32');
+
+const loadPrecisionMode = () => {
+  const urlPrecision = new URLSearchParams(window.location.search).get('precision');
+  if (urlPrecision) {
+    return normalizePrecisionMode(urlPrecision.trim().toLowerCase());
+  }
+
+  try {
+    const stored = window.localStorage.getItem(PRECISION_STORAGE_KEY);
+    if (stored) {
+      return normalizePrecisionMode(stored.trim().toLowerCase());
+    }
+  } catch {
+    return 'f32';
+  }
+
+  return 'f32';
+};
+
+const savePrecisionMode = (value) => {
+  window.localStorage.setItem(PRECISION_STORAGE_KEY, normalizePrecisionMode(value));
+};
+
 const updateModelQueryParam = (value) => {
   const url = new URL(window.location.href);
   url.searchParams.set('model', value);
+  window.history.replaceState({}, '', url);
+};
+
+const updatePrecisionQueryParam = (value) => {
+  const url = new URL(window.location.href);
+  url.searchParams.set('precision', normalizePrecisionMode(value));
+  window.history.replaceState({}, '', url);
+};
+
+const updateChannelQueryParam = (value) => {
+  const url = new URL(window.location.href);
+  url.searchParams.set('channel', String(normalizeDisplayChannel(value)));
   window.history.replaceState({}, '', url);
 };
 
@@ -258,7 +332,9 @@ const buildInfoSections = (manifest, renderInfo) => {
         ['Coarse grid', `${manifest.meta.coarse_size}^3`],
         ['Target grid', `${manifest.meta.target_size}^3`],
         ['Current render', `${renderInfo.renderSize}^3`],
+        ['Precision', renderInfo.precisionMode.toUpperCase()],
         ['Channels', `${manifest.meta.channels}`],
+        ['Display channel', `${renderInfo.displayChannel}`],
         ['Perception out', `${perceptionOut}`],
         ['MLP width', `${adaptWidth}`],
         ['#Params', formatVoxelCount(ncaParams)],
@@ -316,7 +392,7 @@ const setPreviewImage = (image, placeholder, url, missingLabel) => {
   image.src = url;
 };
 
-const run = async (device) => {
+const run = async ({ device, precisionMode, shaderF16Supported }) => {
   const dom = document.getElementById('app');
   if (!dom) {
     throw new Error("Couldn't get app DOM node");
@@ -326,11 +402,15 @@ const run = async (device) => {
   const input = new Input(canvas);
   const availableModels = await discoverAvailableModels();
   let modelName = loadModelName(availableModels);
+  let currentPrecisionMode = normalizePrecisionMode(precisionMode);
+  let currentDisplayChannel = loadDisplayChannel();
   let volume = await Volume.create(
     renderer.getDevice(),
     `../../model/${modelName}`,
     loadOrientation(),
-    loadScaleMultiplier()
+    loadScaleMultiplier(),
+    currentPrecisionMode,
+    currentDisplayChannel
   );
   const fpsDom = document.getElementById('fps');
   const stepCountDom = document.getElementById('step-count');
@@ -338,6 +418,7 @@ const run = async (device) => {
   const infoToggleButton = document.getElementById('info-toggle');
   const togglePlayButton = document.getElementById('toggle-play');
   const stepButton = document.getElementById('step-button');
+  const precisionToggleButton = document.getElementById('precision-toggle');
   const controlsToggleButton = document.getElementById('controls-toggle');
   const controlsPanel = document.getElementById('controls-panel');
   const infoPanel = document.getElementById('info-panel');
@@ -368,6 +449,7 @@ const run = async (device) => {
     || !(infoToggleButton instanceof HTMLButtonElement)
     || !(togglePlayButton instanceof HTMLButtonElement)
     || !(stepButton instanceof HTMLButtonElement)
+    || !(precisionToggleButton instanceof HTMLButtonElement)
     || !(controlsToggleButton instanceof HTMLButtonElement)
     || !(controlsPanel instanceof HTMLElement)
     || !(infoPanel instanceof HTMLElement)
@@ -403,6 +485,10 @@ const run = async (device) => {
   }
   modelSelect.value = modelName;
   let renderInfo = volume.getRenderInfo();
+  currentPrecisionMode = renderInfo.precisionMode;
+  currentDisplayChannel = renderInfo.displayChannel;
+  saveDisplayChannel(currentDisplayChannel);
+  updateChannelQueryParam(currentDisplayChannel);
   input.setRenderSize(renderInfo.renderSize, { preserveZoom: false, immediate: true });
   resetVolume(volume);
   let marcher = await Marcher.create(renderer.getDevice(), renderer.getCamera().getBuffer(), volume);
@@ -451,9 +537,18 @@ const run = async (device) => {
       saveLppnRate(nextRate);
     }
   };
+  const syncPrecisionControl = () => {
+    precisionToggleButton.innerText = currentPrecisionMode.toUpperCase();
+    precisionToggleButton.classList.toggle('is-active', currentPrecisionMode === 'f16');
+    precisionToggleButton.setAttribute('aria-pressed', String(currentPrecisionMode === 'f16'));
+    precisionToggleButton.disabled = !shaderF16Supported;
+    precisionToggleButton.title = shaderF16Supported
+      ? 'Toggle simulation precision between f32 and f16'
+      : 'f16 shaders are not supported on this device/browser';
+  };
   const syncInfoPanel = () => {
     const manifest = volume.getManifest();
-    const nextInfoKey = `${modelName}:${renderInfo.renderSize}:${renderInfo.scaleMultiplier}`;
+    const nextInfoKey = `${modelName}:${renderInfo.renderSize}:${renderInfo.scaleMultiplier}:${renderInfo.displayChannel}`;
     infoTitleDom.innerText = modelName;
     infoPanel.classList.toggle('is-open', infoOpen);
     infoPanel.setAttribute('aria-hidden', String(!infoOpen));
@@ -505,6 +600,7 @@ const run = async (device) => {
     voxelCountDom.innerText = formatVoxelCount(visibleVoxelCount);
     togglePlayButton.innerText = isPlaying ? 'STOP' : 'START';
     togglePlayButton.classList.toggle('is-active', !isPlaying);
+    syncPrecisionControl();
     controlsPanel.classList.toggle('is-collapsed', !controlsOpen);
     controlsToggleButton.classList.toggle('is-active', controlsOpen);
     controlsToggleButton.setAttribute('aria-expanded', String(controlsOpen));
@@ -560,7 +656,9 @@ const run = async (device) => {
         renderer.getDevice(),
         `../../model/${nextModelName}`,
         volume.getOrientationState(),
-        nextScale
+        nextScale,
+        currentPrecisionMode,
+        currentDisplayChannel
       );
       if (preserveState && nextVolume.seedState.byteLength === volume.seedState.byteLength) {
         nextVolume.copySimulationStateFrom(volume);
@@ -580,6 +678,10 @@ const run = async (device) => {
       volume = nextVolume;
       marcher = nextMarcher;
       renderInfo = volume.getRenderInfo();
+      currentPrecisionMode = renderInfo.precisionMode;
+      currentDisplayChannel = renderInfo.displayChannel;
+      saveDisplayChannel(currentDisplayChannel);
+      updateChannelQueryParam(currentDisplayChannel);
       damageRadius = Math.max(1, Math.min(24, damageRadius));
       const nextRenderSize = renderInfo.renderSize;
       crossSection = {
@@ -606,7 +708,7 @@ const run = async (device) => {
       isSwitchingModel = false;
     }
   };
-  const rebuildForScale = async (nextScale) => rebuildVolume(modelName, nextScale, true);
+  const rebuildForScale = async (nextScale) => rebuildVolume(modelName, clampScaleMultiplier(nextScale), true);
   modelSelect.addEventListener('change', () => {
     const nextModelName = modelSelect.value;
     if (!availableModels.includes(nextModelName) || nextModelName === modelName) {
@@ -615,11 +717,13 @@ const run = async (device) => {
     void rebuildVolume(nextModelName, renderInfo.scaleMultiplier, false);
   });
   let scaleRebuildTimeout = 0;
+  scaleRange.min = String(MIN_SCALE_MULTIPLIER);
+  scaleRange.max = String(MAX_SCALE_MULTIPLIER);
   scaleRange.addEventListener('input', () => {
     scaleValueDom.innerText = `${Number(scaleRange.value).toFixed(2)}x`;
     window.clearTimeout(scaleRebuildTimeout);
     scaleRebuildTimeout = window.setTimeout(() => {
-      const nextScale = Number(scaleRange.value);
+      const nextScale = clampScaleMultiplier(Number(scaleRange.value));
       if (!Number.isFinite(nextScale) || Math.abs(nextScale - renderInfo.scaleMultiplier) < 0.001) {
         return;
       }
@@ -671,6 +775,15 @@ const run = async (device) => {
   stepButton.addEventListener('click', () => {
     stepOnce = true;
     updateStatus();
+  });
+  precisionToggleButton.addEventListener('click', () => {
+    if (!shaderF16Supported) {
+      return;
+    }
+    const nextPrecisionMode = currentPrecisionMode === 'f16' ? 'f32' : 'f16';
+    savePrecisionMode(nextPrecisionMode);
+    updatePrecisionQueryParam(nextPrecisionMode);
+    window.location.reload();
   });
   controlsToggleButton.addEventListener('click', () => {
     controlsOpen = !controlsOpen;
@@ -733,12 +846,12 @@ const run = async (device) => {
       return;
     }
     if (event.key === '-' || event.key === '_') {
-      const nextScale = Math.max(0.25, Number((renderInfo.scaleMultiplier - 0.25).toFixed(4)));
+      const nextScale = clampScaleMultiplier(Number((renderInfo.scaleMultiplier - 0.25).toFixed(4)));
       void rebuildForScale(nextScale);
       return;
     }
     if (event.key === '=' || event.key === '+') {
-      const nextScale = Number((renderInfo.scaleMultiplier + 0.25).toFixed(4));
+      const nextScale = clampScaleMultiplier(Number((renderInfo.scaleMultiplier + 0.25).toFixed(4)));
       void rebuildForScale(nextScale);
       return;
     }
@@ -782,10 +895,18 @@ const run = async (device) => {
       label = volume.toggleFlip(1);
     } else if (event.key === 'z' || event.key === 'Z') {
       label = volume.toggleFlip(2);
+    } else if (event.key === 'c' || event.key === 'C') {
+      volume.cycleDisplayChannel();
+      currentDisplayChannel = volume.getDisplayChannel();
+      saveDisplayChannel(volume.getDisplayChannel());
+      updateChannelQueryParam(volume.getDisplayChannel());
+      renderInfo = volume.getRenderInfo();
+      label = volume.getDisplayChannelLabel();
     }
     if (label) {
       saveOrientation(volume);
       forceRaster = true;
+      voxelCountAccumulator = VOXEL_COUNT_REFRESH_SECONDS;
       updateStatus(label);
     }
   });
@@ -846,11 +967,24 @@ const createDevice = async () => {
   if (!adapter) {
     throw new Error("Couldn't load WebGPU adapter");
   }
-  const device = await adapter.requestDevice();
+  const shaderF16Supported = adapter.features.has('shader-f16');
+  const requestedPrecisionMode = loadPrecisionMode();
+  const precisionMode = requestedPrecisionMode === 'f16' && shaderF16Supported ? 'f16' : 'f32';
+  if (precisionMode !== requestedPrecisionMode) {
+    savePrecisionMode(precisionMode);
+    updatePrecisionQueryParam(precisionMode);
+  }
+  const device = await adapter.requestDevice({
+    requiredFeatures: precisionMode === 'f16' ? ['shader-f16'] : [],
+  });
   if (!device) {
     throw new Error("Couldn't load WebGPU device");
   }
-  return device;
+  return {
+    device,
+    precisionMode,
+    shaderF16Supported,
+  };
 };
 
 createDevice()

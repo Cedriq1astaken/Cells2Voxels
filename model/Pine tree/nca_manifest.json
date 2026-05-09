@@ -1,0 +1,162 @@
+{
+  "meta": {
+    "channels": 64,
+    "coarse_size": 16,
+    "target_size": 152,
+    "scale": 9.5
+  },
+  "training_iterations": 2147,
+  "gpu_used": "NVIDIA L4",
+  "ram_used": "2.82 GB",
+  "perception": {
+    "perceive.weight": {
+      "offset": 0,
+      "shape": [
+        256,
+        1,
+        3,
+        3,
+        3
+      ],
+      "count": 6912
+    }
+  },
+  "adaptation": {
+    "adapt.0.weight": {
+      "offset": 27648,
+      "shape": [
+        256,
+        256,
+        1,
+        1,
+        1
+      ],
+      "count": 65536
+    },
+    "adapt.0.bias": {
+      "offset": 289792,
+      "shape": [
+        256
+      ],
+      "count": 256
+    },
+    "adapt.2.weight": {
+      "offset": 290816,
+      "shape": [
+        64,
+        256,
+        1,
+        1,
+        1
+      ],
+      "count": 16384
+    }
+  },
+  "lppn": {
+    "net.0.linear.weight": {
+      "offset": 356352,
+      "shape": [
+        64,
+        100
+      ],
+      "count": 6400
+    },
+    "net.0.linear.bias": {
+      "offset": 381952,
+      "shape": [
+        64
+      ],
+      "count": 64
+    },
+    "net.1.linear.weight": {
+      "offset": 382208,
+      "shape": [
+        64,
+        64
+      ],
+      "count": 4096
+    },
+    "net.1.linear.bias": {
+      "offset": 398592,
+      "shape": [
+        64
+      ],
+      "count": 64
+    },
+    "net.2.linear.weight": {
+      "offset": 398848,
+      "shape": [
+        64,
+        64
+      ],
+      "count": 4096
+    },
+    "net.2.linear.bias": {
+      "offset": 415232,
+      "shape": [
+        64
+      ],
+      "count": 64
+    },
+    "net.3.linear.weight": {
+      "offset": 415488,
+      "shape": [
+        64,
+        64
+      ],
+      "count": 4096
+    },
+    "net.3.linear.bias": {
+      "offset": 431872,
+      "shape": [
+        64
+      ],
+      "count": 64
+    },
+    "net.4.linear.weight": {
+      "offset": 432128,
+      "shape": [
+        64,
+        64
+      ],
+      "count": 4096
+    },
+    "net.4.linear.bias": {
+      "offset": 448512,
+      "shape": [
+        64
+      ],
+      "count": 64
+    },
+    "net.5.linear.weight": {
+      "offset": 448768,
+      "shape": [
+        64,
+        64
+      ],
+      "count": 4096
+    },
+    "net.5.linear.bias": {
+      "offset": 465152,
+      "shape": [
+        64
+      ],
+      "count": 64
+    },
+    "net.6.weight": {
+      "offset": 465408,
+      "shape": [
+        4,
+        64
+      ],
+      "count": 256
+    },
+    "net.6.bias": {
+      "offset": 466432,
+      "shape": [
+        4
+      ],
+      "count": 4
+    }
+  }
+}

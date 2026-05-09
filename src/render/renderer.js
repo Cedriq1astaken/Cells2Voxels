@@ -43,7 +43,7 @@ class Renderer {
     this.textures = [
       {
         attachment: {
-          clearValue: { r: 0.28, g: 0.55, b: 0.9, a: 1 },
+          clearValue: { r: 0.784, g: 0.851, b: 0.902, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
           view: null,

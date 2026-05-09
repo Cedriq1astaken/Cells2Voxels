@@ -1,7 +1,7 @@
 import loadShader from '../loadShader.js';
 
 const defaultPreviewOrientation = {
-  axisMap: new Uint32Array([1, 2, 0]),
+  axisMap: new Uint32Array([0, 2, 1]),
   axisFlip: new Uint32Array([0, 1, 0]),
 };
 const axisPermutations = [
@@ -25,6 +25,23 @@ const quarterTurnTransforms = {
     1: { axisMap: [1, 0, 2], axisFlip: [0, 1, 0] },
     '-1': { axisMap: [1, 0, 2], axisFlip: [1, 0, 0] },
   },
+};
+
+const clampChannelIndex = (channel, channels) => {
+  const maxChannel = Math.max(0, channels - 1);
+  if (!Number.isFinite(channel)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(maxChannel, Math.round(channel)));
+};
+
+const createSeedState = (coarseSize, channels, displayChannel) => {
+  const seedState = new Float32Array(coarseSize * coarseSize * coarseSize * channels);
+  const center = Math.floor(coarseSize * 0.5);
+  const clampedChannel = clampChannelIndex(displayChannel, channels);
+  const centerIndex = (((center * coarseSize + center) * coarseSize + center) * channels) + clampedChannel;
+  seedState[centerIndex] = 1;
+  return seedState;
 };
 
 const getNetIndex = (name) => {
@@ -105,6 +122,33 @@ const buildLppnShaderConstants = (modelInfo) => [
   '',
 ].join('\n');
 
+const buildPrecisionShaderConstants = (precisionMode) => {
+  if (precisionMode === 'f16') {
+    return [
+      'enable f16;',
+      'alias ComputeScalar = f16;',
+      'fn asScalar(value: f32) -> f16 {',
+      '  return f16(value);',
+      '}',
+      'fn scalarToF32(value: f16) -> f32 {',
+      '  return f32(value);',
+      '}',
+      '',
+    ].join('\n');
+  }
+
+  return [
+    'alias ComputeScalar = f32;',
+    'fn asScalar(value: f32) -> f32 {',
+    '  return value;',
+    '}',
+    'fn scalarToF32(value: f32) -> f32 {',
+    '  return value;',
+    '}',
+    '',
+  ].join('\n');
+};
+
 const injectShaderConstants = (source, constants) => {
   return `${constants}${source}`;
 };
@@ -114,7 +158,9 @@ class Volume {
     device,
     modelPath = '../../model/Globe',
     previewOrientation = defaultPreviewOrientation,
-    scaleMultiplier
+    scaleMultiplier,
+    precisionMode = 'f32',
+    displayChannel = 0
   ) {
     const [manifest, weights, stepProgram, finalizeProgram, rasterProgram] = await Promise.all([
       fetch(new URL(`${modelPath}/nca_manifest.json`, import.meta.url)).then((response) => response.json()),
@@ -126,11 +172,12 @@ class Volume {
 
     const { channels, coarse_size: coarseSize } = manifest.meta;
     const resolvedScaleMultiplier = scaleMultiplier ?? manifest.meta.scale ?? 1;
+    const resolvedPrecisionMode = precisionMode === 'f16' ? 'f16' : 'f32';
     const renderSize = Math.max(1, Math.round(coarseSize * resolvedScaleMultiplier));
     const packedX = Math.ceil(renderSize / 4);
     const stateLength = coarseSize * coarseSize * coarseSize * channels;
     const volumeLength = packedX * renderSize * renderSize;
-    const alphaChannel = 0;
+    const alphaChannel = clampChannelIndex(displayChannel, channels);
     const axisMap = Array.from(previewOrientation.axisMap ?? defaultPreviewOrientation.axisMap);
     const axisFlip = Array.from(previewOrientation.axisFlip ?? defaultPreviewOrientation.axisFlip);
 
@@ -145,10 +192,7 @@ class Volume {
       return buffer;
     };
 
-    const seedState = new Float32Array(stateLength);
-    const center = Math.floor(coarseSize * 0.5);
-    const centerIndex = (((center * coarseSize + center) * coarseSize + center) * channels) + alphaChannel;
-    seedState[centerIndex] = 1;
+    const seedState = createSeedState(coarseSize, channels, alphaChannel);
 
     const stateBuffers = [
       createBuffer(seedState, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST),
@@ -162,6 +206,10 @@ class Volume {
     const data = device.createBuffer({
       size: volumeLength * Uint32Array.BYTES_PER_ELEMENT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    const colorData = device.createBuffer({
+      size: renderSize * renderSize * renderSize * Uint32Array.BYTES_PER_ELEMENT,
+      usage: GPUBufferUsage.STORAGE,
     });
 
     const configData = new Uint32Array([
@@ -233,18 +281,21 @@ class Volume {
       lppnLayerBiasOffsets: manifestLayouts.lppnLayerBiasOffsets,
       headWeightOffset: manifestLayouts.headWeightOffset,
       headBiasOffset: manifestLayouts.headBiasOffset,
+      displayChannel: alphaChannel,
+      precisionMode: resolvedPrecisionMode,
       renderSize,
       scaleMultiplier: resolvedScaleMultiplier,
     };
     const stepShaderConstants = buildStepShaderConstants(modelInfo);
     const lppnShaderConstants = buildLppnShaderConstants(modelInfo);
+    const precisionShaderConstants = buildPrecisionShaderConstants(resolvedPrecisionMode);
 
     const stepPipeline = device.createComputePipeline({
       layout: 'auto',
       compute: {
         entryPoint: 'main',
         module: device.createShaderModule({
-          code: injectShaderConstants(stepProgram, stepShaderConstants),
+          code: injectShaderConstants(stepProgram, `${precisionShaderConstants}${stepShaderConstants}`),
         }),
       },
     });
@@ -254,7 +305,7 @@ class Volume {
       compute: {
         entryPoint: 'main',
         module: device.createShaderModule({
-          code: injectShaderConstants(rasterProgram, lppnShaderConstants),
+          code: injectShaderConstants(rasterProgram, `${precisionShaderConstants}${lppnShaderConstants}`),
         }),
       },
     });
@@ -263,7 +314,7 @@ class Volume {
       compute: {
         entryPoint: 'main',
         module: device.createShaderModule({
-          code: finalizeProgram,
+          code: injectShaderConstants(finalizeProgram, precisionShaderConstants),
         }),
       },
     });
@@ -323,8 +374,9 @@ class Volume {
         entries: [
           { binding: 0, resource: { buffer: stateBuffers[0] } },
           { binding: 1, resource: { buffer: data } },
-          { binding: 2, resource: { buffer: config } },
-          { binding: 3, resource: { buffer: lppnParams } },
+          { binding: 2, resource: { buffer: colorData } },
+          { binding: 3, resource: { buffer: config } },
+          { binding: 4, resource: { buffer: lppnParams } },
         ],
       }),
       device.createBindGroup({
@@ -332,8 +384,9 @@ class Volume {
         entries: [
           { binding: 0, resource: { buffer: stateBuffers[1] } },
           { binding: 1, resource: { buffer: data } },
-          { binding: 2, resource: { buffer: config } },
-          { binding: 3, resource: { buffer: lppnParams } },
+          { binding: 2, resource: { buffer: colorData } },
+          { binding: 3, resource: { buffer: config } },
+          { binding: 4, resource: { buffer: lppnParams } },
         ],
       }),
     ];
@@ -342,6 +395,7 @@ class Volume {
       device,
       data,
       volumeLength * Uint32Array.BYTES_PER_ELEMENT,
+      colorData,
       size,
       seedState,
       stateBuffers,
@@ -377,6 +431,7 @@ class Volume {
     device,
     data,
     dataByteLength,
+    colorData,
     size,
     seedState,
     stateBuffers,
@@ -398,6 +453,7 @@ class Volume {
     this.device = device;
     this.data = data;
     this.dataByteLength = dataByteLength;
+    this.colorData = colorData;
     this.size = size;
     this.seedState = seedState;
     this.stateBuffers = stateBuffers;
@@ -513,6 +569,10 @@ class Volume {
     return this.data;
   }
 
+  getColorData() {
+    return this.colorData;
+  }
+
   getSize() {
     return this.size.gpu;
   }
@@ -548,9 +608,41 @@ class Volume {
   getRenderInfo() {
     return {
       coarseSize: this.modelInfo.coarseSize,
+      displayChannel: this.getDisplayChannel(),
+      precisionMode: this.modelInfo.precisionMode,
       renderSize: this.modelInfo.renderSize,
       scaleMultiplier: this.modelInfo.scaleMultiplier,
     };
+  }
+
+  getDisplayChannel() {
+    return this.configData[2];
+  }
+
+  setDisplayChannel(channel) {
+    const nextChannel = clampChannelIndex(channel, this.configData[1]);
+    if (this.configData[2] === nextChannel) {
+      return nextChannel;
+    }
+    this.configData[2] = nextChannel;
+    this.modelInfo.displayChannel = nextChannel;
+    this.updateOrientation();
+    return nextChannel;
+  }
+
+  cycleDisplayChannel(direction = 1) {
+    const channelCount = this.configData[1];
+    if (channelCount <= 1) {
+      return this.getDisplayChannelLabel();
+    }
+    const step = direction < 0 ? -1 : 1;
+    const nextChannel = (this.getDisplayChannel() + step + channelCount) % channelCount;
+    this.setDisplayChannel(nextChannel);
+    return this.getDisplayChannelLabel();
+  }
+
+  getDisplayChannelLabel() {
+    return `Display channel ${this.getDisplayChannel()}`;
   }
 
   getDefaultDamageRadius() {
@@ -578,9 +670,15 @@ class Volume {
   }
 
   reset() {
-    const zeroState = new Float32Array(this.seedState.length);
-    this.device.queue.writeBuffer(this.stateBuffers[0], 0, this.seedState);
-    this.device.queue.writeBuffer(this.stateBuffers[1], 0, this.seedState);
+    const seedState = createSeedState(
+      this.modelInfo.coarseSize,
+      this.modelInfo.channels,
+      this.getDisplayChannel()
+    );
+    const zeroState = new Float32Array(seedState.length);
+    this.seedState = seedState;
+    this.device.queue.writeBuffer(this.stateBuffers[0], 0, seedState);
+    this.device.queue.writeBuffer(this.stateBuffers[1], 0, seedState);
     this.device.queue.writeBuffer(this.rawState, 0, zeroState);
     this.currentState = 0;
     this.tick = 0;

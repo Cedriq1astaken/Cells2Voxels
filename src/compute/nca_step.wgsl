@@ -44,14 +44,14 @@ fn hash(value: u32) -> u32 {
   return x;
 }
 
-fn updateMask(id: vec3<u32>) -> f32 {
+fn updateMask(id: vec3<u32>) -> ComputeScalar {
   let seed =
     ((id.x * 73856093u)
     ^ (id.y * 19349663u)
     ^ (id.z * 83492791u)
     ^ (stepState.tick * 2654435761u));
   let value = f32(hash(seed)) * (1.0 / 4294967295.0);
-  return select(0.0, 1.0, value < 0.5);
+  return select(asScalar(0.0), asScalar(1.0), value < 0.5);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -63,10 +63,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   let mask = updateMask(id);
 
-  var features: array<f32, NCA_FEATURE_COUNT>;
+  var features: array<ComputeScalar, NCA_FEATURE_COUNT>;
   for (var channel: u32 = 0; channel < channels(); channel++) {
     for (var kernel: u32 = 0; kernel < 4u; kernel++) {
-      var sum = 0.0;
+      var sum: ComputeScalar = asScalar(0.0);
       for (var z: u32 = 0u; z < 3u; z++) {
         for (var y: u32 = 0u; y < 3u; y++) {
           for (var x: u32 = 0u; x < 3u; x++) {
@@ -77,7 +77,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             );
             let featureIndex = channel * 4u + kernel;
             let weightIndex = featureIndex * 27u + z * 9u + y * 3u + x;
-            sum += stateIn[stateIndex(sample, channel)] * perceptionWeights[weightIndex];
+            sum += asScalar(stateIn[stateIndex(sample, channel)]) * asScalar(perceptionWeights[weightIndex]);
           }
         }
       }
@@ -85,22 +85,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
 
-  var hidden: array<f32, NCA_ADAPT_HIDDEN_SIZE>;
+  var hidden: array<ComputeScalar, NCA_ADAPT_HIDDEN_SIZE>;
   for (var outChannel: u32 = 0u; outChannel < NCA_ADAPT_HIDDEN_SIZE; outChannel++) {
-    var sum = adapt0Bias[outChannel];
+    var sum: ComputeScalar = asScalar(adapt0Bias[outChannel]);
     for (var inChannel: u32 = 0u; inChannel < NCA_FEATURE_COUNT; inChannel++) {
-      sum += adapt0Weights[outChannel * NCA_FEATURE_COUNT + inChannel] * features[inChannel];
+      sum += asScalar(adapt0Weights[outChannel * NCA_FEATURE_COUNT + inChannel]) * features[inChannel];
     }
-    hidden[outChannel] = max(sum, 0.0);
+    hidden[outChannel] = max(sum, asScalar(0.0));
   }
 
   for (var channel: u32 = 0u; channel < channels(); channel++) {
-    var delta = 0.0;
+    var delta: ComputeScalar = asScalar(0.0);
     for (var hiddenChannel: u32 = 0u; hiddenChannel < NCA_ADAPT_HIDDEN_SIZE; hiddenChannel++) {
-      delta += adapt2Weights[channel * NCA_ADAPT_HIDDEN_SIZE + hiddenChannel] * hidden[hiddenChannel];
+      delta += asScalar(adapt2Weights[channel * NCA_ADAPT_HIDDEN_SIZE + hiddenChannel]) * hidden[hiddenChannel];
     }
-    let current = stateIn[stateIndex(id, channel)];
-    let updated = clamp(current + delta * mask, -1.0, 1.0);
-    stateOut[stateIndex(id, channel)] = updated;
+    let current = asScalar(stateIn[stateIndex(id, channel)]);
+    let updated = clamp(current + delta * mask, asScalar(-1.0), asScalar(1.0));
+    stateOut[stateIndex(id, channel)] = scalarToF32(updated);
   }
 }

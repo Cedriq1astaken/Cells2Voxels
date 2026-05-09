@@ -3,8 +3,9 @@ const LPPN_OMEGA: f32 = 30.0;
 
 @group(0) @binding(0) var<storage, read> state: array<f32>;
 @group(0) @binding(1) var<storage, read_write> data: array<u32>;
-@group(0) @binding(2) var<storage, read> config: array<u32>;
-@group(0) @binding(3) var<storage, read> lppnParams: array<f32>;
+@group(0) @binding(2) var<storage, read_write> colorData: array<u32>;
+@group(0) @binding(3) var<storage, read> config: array<u32>;
+@group(0) @binding(4) var<storage, read> lppnParams: array<f32>;
 
 fn coarseSize() -> u32 {
   return config[0];
@@ -154,60 +155,89 @@ fn sigmoid(value: f32) -> f32 {
   return 1.0 / (1.0 + exp(-value));
 }
 
-fn decodeAlpha(display: vec3<f32>) -> f32 {
+fn decodeLppn(display: vec3<f32>) -> vec4<f32> {
   let renderCoord = modelRenderCoord(display);
   let denom = max(f32(targetSize() - 1u), 1.0);
   let uCoord = (renderCoord / vec3<f32>(denom)) * 2.0 - vec3<f32>(1.0);
   let encoded = encodeCoordinates(uCoord);
 
-  var input: array<f32, LPPN_INPUT_SIZE>;
+  var input: array<ComputeScalar, LPPN_INPUT_SIZE>;
   for (var channel: u32 = 0u; channel < LPPN_CHANNELS; channel++) {
-    input[channel] = sampleStateChannel(display, channel);
+    input[channel] = asScalar(sampleStateChannel(display, channel));
   }
   for (var feature: u32 = 0u; feature < LPPN_COORD_FEATURES; feature++) {
-    input[LPPN_CHANNELS + feature] = encoded[feature];
+    input[LPPN_CHANNELS + feature] = asScalar(encoded[feature]);
   }
 
-  var hiddenA: array<f32, LPPN_HIDDEN_SIZE>;
-  var hiddenB: array<f32, LPPN_HIDDEN_SIZE>;
+  var hiddenA: array<ComputeScalar, LPPN_HIDDEN_SIZE>;
+  var hiddenB: array<ComputeScalar, LPPN_HIDDEN_SIZE>;
   for (var out0: u32 = 0u; out0 < LPPN_HIDDEN_SIZE; out0++) {
-    var sum0 = lppnParams[LPPN_LAYER_BIAS_OFFSETS[0u] + out0];
+    var sum0: ComputeScalar = asScalar(lppnParams[LPPN_LAYER_BIAS_OFFSETS[0u] + out0]);
     for (var in0: u32 = 0u; in0 < LPPN_INPUT_SIZE; in0++) {
-      sum0 += lppnParams[LPPN_LAYER_WEIGHT_OFFSETS[0u] + out0 * LPPN_INPUT_SIZE + in0] * input[in0];
+      sum0 += asScalar(lppnParams[LPPN_LAYER_WEIGHT_OFFSETS[0u] + out0 * LPPN_INPUT_SIZE + in0]) * input[in0];
     }
-    hiddenA[out0] = sin(LPPN_OMEGA * sum0);
+    hiddenA[out0] = sin(asScalar(LPPN_OMEGA) * sum0);
   }
 
   var latestIsB = false;
   for (var layer: u32 = 1u; layer < LPPN_SINE_LAYERS; layer++) {
     if (!latestIsB) {
       for (var outA: u32 = 0u; outA < LPPN_HIDDEN_SIZE; outA++) {
-        var sumA = lppnParams[LPPN_LAYER_BIAS_OFFSETS[layer] + outA];
+        var sumA: ComputeScalar = asScalar(lppnParams[LPPN_LAYER_BIAS_OFFSETS[layer] + outA]);
         for (var inA: u32 = 0u; inA < LPPN_HIDDEN_SIZE; inA++) {
-          sumA += lppnParams[LPPN_LAYER_WEIGHT_OFFSETS[layer] + outA * LPPN_HIDDEN_SIZE + inA] * hiddenA[inA];
+          sumA += asScalar(lppnParams[LPPN_LAYER_WEIGHT_OFFSETS[layer] + outA * LPPN_HIDDEN_SIZE + inA]) * hiddenA[inA];
         }
-        hiddenB[outA] = sin(LPPN_OMEGA * sumA);
+        hiddenB[outA] = sin(asScalar(LPPN_OMEGA) * sumA);
       }
       latestIsB = true;
     } else {
       for (var outB: u32 = 0u; outB < LPPN_HIDDEN_SIZE; outB++) {
-        var sumB = lppnParams[LPPN_LAYER_BIAS_OFFSETS[layer] + outB];
+        var sumB: ComputeScalar = asScalar(lppnParams[LPPN_LAYER_BIAS_OFFSETS[layer] + outB]);
         for (var inB: u32 = 0u; inB < LPPN_HIDDEN_SIZE; inB++) {
-          sumB += lppnParams[LPPN_LAYER_WEIGHT_OFFSETS[layer] + outB * LPPN_HIDDEN_SIZE + inB] * hiddenB[inB];
+          sumB += asScalar(lppnParams[LPPN_LAYER_WEIGHT_OFFSETS[layer] + outB * LPPN_HIDDEN_SIZE + inB]) * hiddenB[inB];
         }
-        hiddenA[outB] = sin(LPPN_OMEGA * sumB);
+        hiddenA[outB] = sin(asScalar(LPPN_OMEGA) * sumB);
       }
       latestIsB = false;
     }
   }
 
-  var sum = lppnParams[LPPN_HEAD_BIAS_OFFSET + 3u];
-  for (var index: u32 = 0u; index < LPPN_HIDDEN_SIZE; index++) {
-    let hidden = select(hiddenA[index], hiddenB[index], latestIsB);
-    sum += lppnParams[LPPN_HEAD_WEIGHT_OFFSET + 3u * LPPN_HIDDEN_SIZE + index] * hidden;
+  var raw: array<ComputeScalar, 4>;
+  for (var out3: u32 = 0u; out3 < 4u; out3++) {
+    var sum3: ComputeScalar = asScalar(lppnParams[LPPN_HEAD_BIAS_OFFSET + out3]);
+    for (var in3: u32 = 0u; in3 < LPPN_HIDDEN_SIZE; in3++) {
+      let hidden = select(hiddenA[in3], hiddenB[in3], latestIsB);
+      sum3 += asScalar(lppnParams[LPPN_HEAD_WEIGHT_OFFSET + out3 * LPPN_HIDDEN_SIZE + in3]) * hidden;
+    }
+    raw[out3] = sum3;
   }
 
-  return sigmoid(sum);
+  return vec4<f32>(
+    sigmoid(scalarToF32(raw[0])),
+    sigmoid(scalarToF32(raw[1])),
+    sigmoid(scalarToF32(raw[2])),
+    sigmoid(scalarToF32(raw[3]))
+  );
+}
+
+fn packColor(color: vec4<f32>) -> u32 {
+  let quantized = vec4<u32>(round(clamp(color, vec4<f32>(0.0), vec4<f32>(1.0)) * 255.0));
+  return quantized.x
+    | (quantized.y << 8u)
+    | (quantized.z << 16u)
+    | (quantized.w << 24u);
+}
+
+fn clearPackedEntry(id: vec3<u32>) {
+  let packedIndex = id.z * packedX() * targetSize() + id.y * packedX() + id.x;
+  data[packedIndex] = 0u;
+  for (var offset: u32 = 0u; offset < 4u; offset++) {
+    let x = id.x * 4u + offset;
+    if (x < targetSize()) {
+      let colorIndex = id.z * targetSize() * targetSize() + id.y * targetSize() + x;
+      colorData[colorIndex] = 0u;
+    }
+  }
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -217,8 +247,25 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   if (id.y > sectionMaxY() || id.z > sectionMaxZ()) {
-    let clippedIndex = id.z * packedX() * targetSize() + id.y * packedX() + id.x;
-    data[clippedIndex] = 0u;
+    clearPackedEntry(id);
+    return;
+  }
+
+  var coarseAlphas: array<f32, 4>;
+  var hasCoarseContent = false;
+  for (var offset: u32 = 0u; offset < 4u; offset++) {
+    let x = id.x * 4u + offset;
+    var coarseAlpha = 0.0;
+    if (x < targetSize() && x <= sectionMaxX()) {
+      let display = vec3<f32>(f32(x), f32(id.y), f32(id.z));
+      coarseAlpha = sampleStateChannel(display, alphaChannel());
+      hasCoarseContent = hasCoarseContent || coarseAlpha > 0.1;
+    }
+    coarseAlphas[offset] = coarseAlpha;
+  }
+
+  if (!hasCoarseContent) {
+    clearPackedEntry(id);
     return;
   }
 
@@ -226,13 +273,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var offset: u32 = 0u; offset < 4u; offset++) {
     let x = id.x * 4u + offset;
     var value = 0u;
-    if (x < targetSize() && x <= sectionMaxX()) {
-      let display = vec3<f32>(f32(x), f32(id.y), f32(id.z));
-      let coarseAlpha = sampleStateChannel(display, alphaChannel());
-      if (coarseAlpha > 0.1) {
-        let decodedAlpha = decodeAlpha(display);
-        value = select(0u, u32(round(decodedAlpha * 255.0)), decodedAlpha > 0.1);
+    if (x < targetSize()) {
+      let colorIndex = id.z * targetSize() * targetSize() + id.y * targetSize() + x;
+      var packedColor = 0u;
+      if (x <= sectionMaxX() && coarseAlphas[offset] > 0.1) {
+        let display = vec3<f32>(f32(x), f32(id.y), f32(id.z));
+        let decoded = decodeLppn(display);
+        packedColor = packColor(decoded);
+        value = select(0u, u32(round(decoded.a * 255.0)), decoded.a > 0.1);
       }
+      colorData[colorIndex] = packedColor;
     }
     packed |= value << (offset * 8u);
   }
