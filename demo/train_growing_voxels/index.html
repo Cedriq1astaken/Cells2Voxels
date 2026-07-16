@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cells2Voxels - Train</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=14">
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+
+<body>
+  <header id="top-bar">
+    <div class="top-stats" aria-label="Training readouts">
+      <div class="stat-box"><span class="stat-label">IPS</span><span class="stat-val" id="stat-ips">-</span></div>
+      <div class="stat-box"><span class="stat-label">LOSS</span><span class="stat-val" id="stat-loss">-</span></div>
+      <div class="stat-box stat-wide"><span class="stat-label">ITERATION</span><span class="stat-val"
+          id="stat-iter">0</span></div>
+      <div class="stat-box stat-wide"><span class="stat-label">VOXELS</span><span class="stat-val"
+          id="stat-voxels">0</span></div>
+    </div>
+    <div class="top-actions">
+      <button id="btn-start" class="top-btn is-primary" type="button" disabled>START</button>
+      <button id="btn-stop" class="top-btn" type="button" disabled>STOP</button>
+      <button id="btn-reset" class="top-btn" type="button" disabled>RESET</button>
+      <button id="btn-export" class="top-btn" type="button" disabled>EXPORT</button>
+      <button id="btn-controls" class="top-btn is-active" type="button" aria-expanded="true">CONTROLS</button>
+    </div>
+  </header>
+
+  <div id="main-layout">
+    <main id="canvas-container">
+      <canvas id="canvas" aria-label="Voxel training preview"></canvas>
+      <div id="loading-overlay" class="overlay hidden" role="status">
+        <div class="overlay-box"><span class="spinner" aria-hidden="true"></span><span id="loading-text">Preparing
+            target</span></div>
+      </div>
+      <div id="status-banner" class="status-banner">Initializing WebGPU</div>
+    </main>
+
+    <aside id="left-panel" aria-label="Training controls">
+      <div class="panel-title-row">
+        <span class="panel-title">Growing Voxel Trainer</span>
+        <span id="target-name" class="panel-value">NO TARGET</span>
+      </div>
+
+      <section class="panel-section">
+        <label for="file-input">TARGET (.VOX OR .OBJ)</label>
+        <div class="file-input-wrapper">
+          <button class="file-btn" data-file-for="file-input" type="button">BROWSE TARGET</button>
+          <input type="file" id="file-input" accept=".vox,.obj">
+        </div>
+        <div id="upload-status" class="status-msg">No target selected</div>
+      </section>
+
+      <section id="vol-upload-container" class="panel-section hidden">
+        <label for="vol-input">SOLID TEXTURE (.VOL)</label>
+        <div class="file-input-wrapper">
+          <button class="file-btn" data-file-for="vol-input" type="button">BROWSE TEXTURE</button>
+          <input type="file" id="vol-input" accept=".vol">
+        </div>
+        <div id="vol-status" class="status-msg">OBJ requires a VOL texture</div>
+      </section>
+
+      <div class="panel-title-row section-heading">
+        <span class="panel-title">Model</span>
+        <span id="model-shape" class="panel-value">-</span>
+      </div>
+
+      <section class="panel-section compact-section">
+        <label for="cfg-res">TARGET RESOLUTION <span id="val-res" class="slider-val">32</span></label>
+        <input type="range" id="cfg-res" min="24" max="64" step="8" value="32">
+        <label class="check-row" for="cfg-native-res">
+          <input type="checkbox" id="cfg-native-res" checked>
+          <span>USE NATIVE VOX RESOLUTION</span>
+        </label>
+      </section>
+
+      <section class="panel-section compact-section two-column">
+        <label for="cfg-scale">LPPN SCALE</label>
+        <select id="cfg-scale">
+          <option value="8">8X</option>
+          <option value="4" selected>4X</option>
+          <option value="2">2X</option>
+          <option value="1">1X</option>
+        </select>
+      </section>
+
+      <section class="panel-section compact-section">
+        <label for="cfg-channels">CHANNELS <span id="val-channels" class="slider-val">32</span></label>
+        <input type="range" id="cfg-channels" min="8" max="64" step="4" value="32">
+      </section>
+
+      <section class="panel-section compact-section two-column">
+        <label for="cfg-width">NCA WIDTH</label>
+        <select id="cfg-width">
+          <option value="64">64 FAST</option>
+          <option value="128">128 STANDARD</option>
+          <option value="256" selected>256 PAPER</option>
+        </select>
+      </section>
+
+      <section class="panel-section compact-section">
+        <label for="cfg-lr">LEARNING RATE <span id="val-lr" class="slider-val">0.001</span></label>
+        <input type="range" id="cfg-lr" min="0.0002" max="0.005" step="0.0002" value="0.001">
+      </section>
+
+      <section class="panel-section compact-section">
+        <label for="cfg-step-min">ROLLOUT <span id="val-steps" class="slider-val">32-64</span></label>
+        <div class="range-pair">
+          <input type="range" id="cfg-step-min" min="8" max="96" step="8" value="32">
+          <input type="range" id="cfg-step-max" min="8" max="96" step="8" value="64">
+        </div>
+      </section>
+
+      <section class="panel-section compact-section">
+        <label for="cfg-seed-radius">SEED RADIUS <span id="val-seed-radius" class="slider-val">3</span></label>
+        <input type="range" id="cfg-seed-radius" min="1" max="3" step="1" value="3">
+      </section>
+    </aside>
+    <aside id="right-panel" aria-label="Training loss">
+      <div class="panel-title-row">
+        <span class="panel-title">Loss History</span>
+        <span id="loss-current" class="panel-value">-</span>
+      </div>
+      <section class="loss-panel">
+        <canvas id="loss-chart" aria-label="Live training loss chart"></canvas>
+        <div class="loss-range"><span id="loss-min">-</span><span id="loss-max">-</span></div>
+      </section>
+    </aside>
+  </div>
+
+  <script type="module" src="script/app.js?v=14"></script>
+</body>
+
+</html>

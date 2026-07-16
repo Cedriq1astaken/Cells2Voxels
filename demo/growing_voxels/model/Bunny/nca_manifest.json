@@ -1,0 +1,122 @@
+{
+  "meta": {
+    "channels": 64,
+    "coarse_size": 29,
+    "target_size": 116,
+    "scale": 4.0,
+    "living_channel": 3,
+    "living_threshold": 0.1,
+    "edge_loss_weight": 0.0,
+    "iterations": 4000,
+    "max_occupancy": 0.18417421788511212,
+    "gpu_used": "NVIDIA L4",
+    "target_path": "stanford_bunny.obj",
+    "ram_used_gb": 4.11
+  },
+  "perception": {
+    "perceive.weight": {
+      "offset": 0,
+      "count": 135,
+      "shape": [
+        5,
+        1,
+        3,
+        3,
+        3
+      ]
+    }
+  },
+  "adaptation": {
+    "adapt.0.weight": {
+      "offset": 540,
+      "count": 81920,
+      "shape": [
+        256,
+        320,
+        1,
+        1,
+        1
+      ]
+    },
+    "adapt.0.bias": {
+      "offset": 328220,
+      "count": 256,
+      "shape": [
+        256
+      ]
+    },
+    "adapt.2.weight": {
+      "offset": 329244,
+      "count": 16384,
+      "shape": [
+        64,
+        256,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "lppn": {
+    "net.0.linear.weight": {
+      "offset": 394780,
+      "count": 2240,
+      "shape": [
+        32,
+        70
+      ]
+    },
+    "net.0.linear.bias": {
+      "offset": 403740,
+      "count": 32,
+      "shape": [
+        32
+      ]
+    },
+    "net.1.linear.weight": {
+      "offset": 403868,
+      "count": 1024,
+      "shape": [
+        32,
+        32
+      ]
+    },
+    "net.1.linear.bias": {
+      "offset": 407964,
+      "count": 32,
+      "shape": [
+        32
+      ]
+    },
+    "net.2.linear.weight": {
+      "offset": 408092,
+      "count": 1024,
+      "shape": [
+        32,
+        32
+      ]
+    },
+    "net.2.linear.bias": {
+      "offset": 412188,
+      "count": 32,
+      "shape": [
+        32
+      ]
+    },
+    "net.3.weight": {
+      "offset": 412316,
+      "count": 128,
+      "shape": [
+        4,
+        32
+      ]
+    },
+    "net.3.bias": {
+      "offset": 412828,
+      "count": 4,
+      "shape": [
+        4
+      ]
+    }
+  }
+}

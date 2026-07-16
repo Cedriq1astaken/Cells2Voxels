@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cells2Voxels Radiance</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+  <header id="top-bar">
+    <div class="top-stats" aria-label="Simulation readouts">
+      <div class="stat-box"><span class="stat-label">FPS</span><span class="stat-val" id="stat-fps">-</span></div>
+      <div class="stat-box"><span class="stat-label">STEP</span><span class="stat-val" id="stat-step">0</span></div>
+      <div class="stat-box stat-wide"><span class="stat-label">SAMPLES</span><span class="stat-val" id="stat-samples">-</span></div>
+      <div class="stat-box stat-chip"><span class="stat-label">GPU</span><span class="stat-val" id="stat-f16">-</span></div>
+      <div class="stat-box stat-wide"><span class="stat-label">GPU TIME</span><span class="stat-val" id="stat-gpu-time">-</span></div>
+    </div>
+
+    <div class="top-actions">
+      <button id="btn-start-stop" class="top-btn is-primary" type="button">START</button>
+      <button id="btn-reset" class="top-btn" type="button">RESET</button>
+      <button id="btn-info" class="top-btn" type="button">INFO</button>
+      <button id="btn-controls" class="top-btn is-active" type="button" aria-expanded="true">CONTROLS</button>
+      <label class="model-picker">
+        <span>MODEL</span>
+        <select id="model-select"></select>
+      </label>
+    </div>
+  </header>
+
+  <div id="main-layout">
+    <main id="canvas-container">
+      <canvas id="canvas"></canvas>
+    </main>
+
+    <div id="status-banner" class="hidden" aria-hidden="true"></div>
+
+    <aside id="left-panel" aria-label="Simulation controls">
+      <div class="panel-title-row">
+        <span class="panel-title">Radiance</span>
+        <span id="val-model" class="panel-model">-</span>
+      </div>
+
+      <div class="panel-section">
+        <label>DAMAGE RADIUS <span id="val-damage-radius" class="slider-val">2</span></label>
+        <input type="range" id="slider-damage-radius" min="1" max="6" step="1" value="2">
+      </div>
+
+      <div class="panel-section">
+        <label>GROWTH RATE <span id="val-sim-rate" class="slider-val">1.00x</span></label>
+        <input type="range" id="slider-sim-rate" min="1" max="6" step="1" value="1">
+      </div>
+
+      <div class="panel-section compact-section">
+        <label>DENSITY <span id="val-density" class="slider-val">1.00x</span></label>
+        <input type="range" id="slider-density" min="0.25" max="4" step="0.05" value="1">
+      </div>
+
+      <div class="panel-section compact-section">
+        <label>EXPOSURE <span id="val-exposure" class="slider-val">1.00x</span></label>
+        <input type="range" id="slider-exposure" min="0.25" max="3" step="0.05" value="1">
+      </div>
+    </aside>
+
+    <div id="info-panel" class="hidden" aria-hidden="true">
+      <div class="info-header">
+        <h3>Radiance Info</h3>
+        <button id="btn-close-info" type="button">CLOSE</button>
+      </div>
+      <table class="info-table">
+        <tr><td>Channels</td><td id="info-channels">-</td></tr>
+        <tr><td>Grid</td><td id="info-grid">-</td></tr>
+        <tr><td>Ray Samples</td><td id="info-samples">-</td></tr>
+        <tr><td>Decoder</td><td id="info-decoder">-</td></tr>
+        <tr><td>Train GPU</td><td id="info-gpu">-</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <script type="module" src="script/app.js?v=1"></script>
+</body>
+</html>

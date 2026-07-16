@@ -1,0 +1,161 @@
+{
+  "format": "cells2voxels-radiance-v1",
+  "task": "growing_rf",
+  "standalone_notebook": true,
+  "meta": {
+    "experiment_name": "GrowingRF_Notebook",
+    "channels": 32,
+    "perception_kernels": 5,
+    "grid_size": [
+      48,
+      48,
+      48
+    ],
+    "coarse_size": 48,
+    "living_channel": 3,
+    "living_threshold": 0.1,
+    "seed_radius": 3,
+    "update_prob": 0.5,
+    "padding": "constant",
+    "output_type": "s",
+    "iterations": 4000,
+    "precision": "float32",
+    "scene_path": "/content/data/radiance_fields/lego",
+    "gpu_used": "NVIDIA L4",
+    "ram_used_gb": 3.91
+  },
+  "renderer": {
+    "type": "radiance_field",
+    "num_samples": 96,
+    "num_fine_samples": 64,
+    "voxel_bounds": [
+      -1.25,
+      1.25
+    ],
+    "background_color": 0.0,
+    "density_factor": 1.0,
+    "color_factor": 1.0,
+    "non_linearity": "softplus",
+    "apply_living_mask": true,
+    "sh_degree": 0
+  },
+  "siren": {
+    "in_features": 32,
+    "coord_dim": 3,
+    "out_features": 4,
+    "hidden_features": 64,
+    "hidden_layers": 2,
+    "outermost_linear": true,
+    "fx": "linear",
+    "activation": "sin",
+    "num_frequencies": 1,
+    "first_omega_0": 10.0,
+    "hidden_omega_0": 10.0
+  },
+  "perception": {
+    "perceive.weight": {
+      "offset": 0,
+      "count": 135,
+      "shape": [
+        5,
+        1,
+        3,
+        3,
+        3
+      ]
+    }
+  },
+  "adaptation": {
+    "adapt.0.weight": {
+      "offset": 540,
+      "count": 40960,
+      "shape": [
+        256,
+        160,
+        1,
+        1,
+        1
+      ]
+    },
+    "adapt.0.bias": {
+      "offset": 164380,
+      "count": 256,
+      "shape": [
+        256
+      ]
+    },
+    "adapt.2.weight": {
+      "offset": 165404,
+      "count": 8192,
+      "shape": [
+        32,
+        256,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "radiance": {
+    "net.0.linear.weight": {
+      "offset": 198172,
+      "count": 2432,
+      "shape": [
+        64,
+        38
+      ]
+    },
+    "net.0.linear.bias": {
+      "offset": 207900,
+      "count": 64,
+      "shape": [
+        64
+      ]
+    },
+    "net.1.linear.weight": {
+      "offset": 208156,
+      "count": 4096,
+      "shape": [
+        64,
+        64
+      ]
+    },
+    "net.1.linear.bias": {
+      "offset": 224540,
+      "count": 64,
+      "shape": [
+        64
+      ]
+    },
+    "net.2.linear.weight": {
+      "offset": 224796,
+      "count": 4096,
+      "shape": [
+        64,
+        64
+      ]
+    },
+    "net.2.linear.bias": {
+      "offset": 241180,
+      "count": 64,
+      "shape": [
+        64
+      ]
+    },
+    "net.3.weight": {
+      "offset": 241436,
+      "count": 256,
+      "shape": [
+        4,
+        64
+      ]
+    },
+    "net.3.bias": {
+      "offset": 242460,
+      "count": 4,
+      "shape": [
+        4
+      ]
+    }
+  }
+}

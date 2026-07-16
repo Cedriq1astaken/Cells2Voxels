@@ -1,0 +1,122 @@
+{
+  "meta": {
+    "channels": 48,
+    "coarse_size": 33,
+    "target_size": 264,
+    "scale": 8.0,
+    "living_channel": 3,
+    "living_threshold": 0.1,
+    "edge_loss_weight": 0.0,
+    "iterations": 4000,
+    "max_occupancy": 0.1,
+    "gpu_used": "NVIDIA A100-SXM4-40GB",
+    "target_path": "Boston Tea Pot.npy",
+    "ram_used_gb": 4.57
+  },
+  "perception": {
+    "perceive.weight": {
+      "offset": 0,
+      "count": 135,
+      "shape": [
+        5,
+        1,
+        3,
+        3,
+        3
+      ]
+    }
+  },
+  "adaptation": {
+    "adapt.0.weight": {
+      "offset": 540,
+      "count": 61440,
+      "shape": [
+        256,
+        240,
+        1,
+        1,
+        1
+      ]
+    },
+    "adapt.0.bias": {
+      "offset": 246300,
+      "count": 256,
+      "shape": [
+        256
+      ]
+    },
+    "adapt.2.weight": {
+      "offset": 247324,
+      "count": 12288,
+      "shape": [
+        48,
+        256,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "lppn": {
+    "net.0.linear.weight": {
+      "offset": 296476,
+      "count": 1728,
+      "shape": [
+        32,
+        54
+      ]
+    },
+    "net.0.linear.bias": {
+      "offset": 303388,
+      "count": 32,
+      "shape": [
+        32
+      ]
+    },
+    "net.1.linear.weight": {
+      "offset": 303516,
+      "count": 1024,
+      "shape": [
+        32,
+        32
+      ]
+    },
+    "net.1.linear.bias": {
+      "offset": 307612,
+      "count": 32,
+      "shape": [
+        32
+      ]
+    },
+    "net.2.linear.weight": {
+      "offset": 307740,
+      "count": 1024,
+      "shape": [
+        32,
+        32
+      ]
+    },
+    "net.2.linear.bias": {
+      "offset": 311836,
+      "count": 32,
+      "shape": [
+        32
+      ]
+    },
+    "net.3.weight": {
+      "offset": 311964,
+      "count": 128,
+      "shape": [
+        4,
+        32
+      ]
+    },
+    "net.3.bias": {
+      "offset": 312476,
+      "count": 4,
+      "shape": [
+        4
+      ]
+    }
+  }
+}
