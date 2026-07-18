@@ -1,5 +1,5 @@
-import { createBuffer, createEmptyBuffer } from './gpu.js';
-import { toFloat16Array } from './f16.js';
+import { createBuffer, createEmptyBuffer } from './gpu.js?v=18';
+import { toFloat16Array } from './f16.js?v=18';
 
 const CUBE_VERTICES = new Float32Array([
   0,0,0, 0,0,-1,  1,1,0, 0,0,-1,  1,0,0, 0,0,-1,
@@ -237,7 +237,7 @@ export class VoxelRenderer {
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: context.getCurrentTexture().createView(),
-        clearValue: { r: 0.78, g: 0.84, b: 0.87, a: 1 },
+        clearValue: { r: 0.12549, g: 0.16471, b: 0.20784, a: 1 },
         loadOp: 'clear',
         storeOp: 'store',
       }],

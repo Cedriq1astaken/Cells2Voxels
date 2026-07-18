@@ -15,15 +15,15 @@ const PI: f32 = 3.141592653589793;
 @group(0) @binding(2) var<storage, read_write> count: array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> params: array<vec4<f32>, 3>;
 
-@group(0) @binding(4) var<storage, read> l0_w: array<f32>;  // [HD, INPUT_DIM]
-@group(0) @binding(5) var<storage, read> l0_b: array<f32>;  // [HD]
-@group(0) @binding(6) var<storage, read> l1_w: array<f32>;  // [HD, HD]
-@group(0) @binding(7) var<storage, read> l1_b: array<f32>;  // [HD]
-@group(0) @binding(8) var<storage, read> l2_w: array<f32>;  // [HD, HD]
-@group(0) @binding(9) var<storage, read> l2_b: array<f32>;  // [HD]
-@group(0) @binding(10) var<storage, read> l3_w: array<f32>; // [4, HD]
-@group(0) @binding(11) var<storage, read> l3_b: array<f32>; // [4]
-
+@group(0) @binding(4) var<storage, read> fine_alpha: array<f32>; // [RS, RS, RS]
+@group(0) @binding(5) var<storage, read> l0_w: array<f32>;  // [HD, INPUT_DIM]
+@group(0) @binding(6) var<storage, read> l0_b: array<f32>;  // [HD]
+@group(0) @binding(7) var<storage, read> l1_w: array<f32>;  // [HD, HD]
+@group(0) @binding(8) var<storage, read> l1_b: array<f32>;  // [HD]
+@group(0) @binding(9) var<storage, read> l2_w: array<f32>;  // [HD, HD]
+@group(0) @binding(10) var<storage, read> l2_b: array<f32>; // [HD]
+@group(0) @binding(11) var<storage, read> l3_w: array<f32>; // [4, HD]
+@group(0) @binding(12) var<storage, read> l3_b: array<f32>; // [4]
 fn state_at(c: u32, z: i32, y: i32, x: i32) -> f32 {
   let size = i32(S);
   let wz = (z % size + size) % size;
@@ -34,6 +34,30 @@ fn state_at(c: u32, z: i32, y: i32, x: i32) -> f32 {
 
 fn out_idx(c: u32, z: u32, y: u32, x: u32) -> u32 {
   return c * RS_VOL + z * RS * RS + y * RS + x;
+}
+
+// Match the trainer: max-pool the circularly interpolated fine alpha field
+// over a zero-padded 3x3x3 neighborhood. The field is decoded once in
+// living_mask.wgsl instead of redoing 27 trilinear samples here.
+fn fine_alpha_at(x: u32, y: u32, z: u32) -> f32 {
+  return fine_alpha[z * RS * RS + y * RS + x];
+}
+
+fn fine_living_mask(fx: u32, fy: u32, fz: u32) -> bool {
+  var max_alpha = 0.0;
+  for (var dz: i32 = -1; dz <= 1; dz++) {
+    for (var dy: i32 = -1; dy <= 1; dy++) {
+      for (var dx: i32 = -1; dx <= 1; dx++) {
+        let nx = i32(fx) + dx;
+        let ny = i32(fy) + dy;
+        let nz = i32(fz) + dz;
+        if (nx >= 0 && ny >= 0 && nz >= 0 && nx < i32(RS) && ny < i32(RS) && nz < i32(RS)) {
+          max_alpha = max(max_alpha, fine_alpha_at(u32(nx), u32(ny), u32(nz)));
+        }
+      }
+    }
+  }
+  return max_alpha > {{LIVING_THRESHOLD}};
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -59,18 +83,7 @@ fn lppn_decode(@builtin(global_invocation_id) gid: vec3<u32>) {
   let cf_y = (f32(fy) + 0.5) / scale - 0.5;
   let cf_z = (f32(fz) + 0.5) / scale - 0.5;
 
-  // Approximate living mask: check if any neighbor in coarse grid is alive
-  var max_alpha: f32 = 0.0;
-  for (var dz: i32 = -1; dz <= 1; dz++) {
-    for (var dy: i32 = -1; dy <= 1; dy++) {
-      for (var dx: i32 = -1; dx <= 1; dx++) {
-        max_alpha = max(max_alpha, state_at({{LC}}u, i32(round(cf_z)) + dz, i32(round(cf_y)) + dy, i32(round(cf_x)) + dx));
-      }
-    }
-  }
-  let is_alive = max_alpha > {{LIVING_THRESHOLD}};
-
-  if (!is_alive) {
+  if (!fine_living_mask(fx, fy, fz)) {
     output[out_idx(0u, fz, fy, fx)] = 0.0;
     output[out_idx(1u, fz, fy, fx)] = 0.0;
     output[out_idx(2u, fz, fy, fx)] = 0.0;
@@ -171,18 +184,15 @@ fn lppn_decode(@builtin(global_invocation_id) gid: vec3<u32>) {
     rgba[j] = val;
   }
 
-  // Apply living mask
-  let out_r = max(rgba[0], 0.0);
-  let out_g = max(rgba[1], 0.0);
-  let out_b = max(rgba[2], 0.0);
-  let out_a = max(rgba[3], 0.0);
+  // Preserve the decoder's raw linear RGBA output. The compaction/rendering
+  // stage clamps values for display, while training and inference semantics
+  // remain identical.
+  output[out_idx(0u, fz, fy, fx)] = rgba[0];
+  output[out_idx(1u, fz, fy, fx)] = rgba[1];
+  output[out_idx(2u, fz, fy, fx)] = rgba[2];
+  output[out_idx(3u, fz, fy, fx)] = rgba[3];
 
-  output[out_idx(0u, fz, fy, fx)] = out_r;
-  output[out_idx(1u, fz, fy, fx)] = out_g;
-  output[out_idx(2u, fz, fy, fx)] = out_b;
-  output[out_idx(3u, fz, fy, fx)] = out_a;
-
-  if (out_a > {{LIVING_THRESHOLD}}) {
+  if (rgba[3] > {{LIVING_THRESHOLD}}) {
     atomicAdd(&count[0], 1u);
   }
 }

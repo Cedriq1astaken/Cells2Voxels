@@ -180,7 +180,7 @@ export class VoxelRenderer {
 
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
-        view: textureView, clearValue: { r: 0.12, g: 0.12, b: 0.15, a: 1.0 }, loadOp: 'clear', storeOp: 'store',
+        view: textureView, clearValue: { r: 0.12549, g: 0.16471, b: 0.20784, a: 1.0 }, loadOp: 'clear', storeOp: 'store',
       }],
       depthStencilAttachment: {
         view: depthView, depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'store',

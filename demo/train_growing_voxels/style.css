@@ -1,5 +1,6 @@
 :root {
   --navy: #2f4156;
+  --navy-hover: #3a5067;
   --teal: #5b7d87;
   --sky: #c5d4df;
   --paper: #f6f5f0;
@@ -7,6 +8,31 @@
   --ink: #243543;
   --green: #4f8066;
   --red: #9d5555;
+  --body-top: #d7e4ed;
+  --body-bottom: #b7ccd8;
+  --body-glow: rgba(246, 245, 240, 0.42);
+  --topbar-surface: rgba(91, 125, 135, 0.9);
+  --topbar-actions: rgba(241, 235, 216, 0.94);
+  --topbar-divider: rgba(246, 245, 240, 0.32);
+  --topbar-bottom-line: rgba(246, 245, 240, 0.78);
+  --stat-label: rgba(246, 245, 240, 0.68);
+  --surface: rgba(246, 245, 240, 0.92);
+  --surface-strong: rgba(246, 245, 240, 0.96);
+  --control-surface: rgba(253, 252, 251, 0.92);
+  --control-hover: rgba(253, 252, 251, 0.78);
+  --slider-track: rgba(47, 65, 86, 0.18);
+  --slider-shadow: rgba(47, 65, 86, 0.2);
+  --focus-ring: rgba(47, 65, 86, 0.72);
+  --scrollbar-thumb: rgba(91, 125, 135, 0.65);
+  --image-placeholder: rgba(197, 212, 223, 0.42);
+  --info-row-line: rgba(47, 65, 86, 0.12);
+  --chart-grid: rgba(91, 125, 135, 0.18);
+  --status-info: rgba(47, 65, 86, 0.9);
+  --status-error: rgba(128, 54, 54, 0.94);
+  --status-ready: rgba(55, 100, 76, 0.92);
+  --overlay: rgba(199, 215, 223, 0.44);
+  --spinner-border: rgba(91, 125, 135, 0.25);
+  --canvas-clear: #202a35;
   --line: rgba(47, 65, 86, 0.24);
   --line-strong: rgba(47, 65, 86, 0.36);
   --shadow: rgba(47, 65, 86, 0.18);
@@ -28,8 +54,8 @@ body {
 body {
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 4%, rgba(246, 245, 240, 0.42), transparent 42%),
-    linear-gradient(180deg, #d7e4ed 0%, var(--sky) 48%, #b7ccd8 100%);
+    radial-gradient(circle at 50% 4%, var(--body-glow), transparent 42%),
+    linear-gradient(180deg, var(--body-top) 0%, var(--sky) 48%, var(--body-bottom) 100%);
   color: var(--ink);
   font-family: "VT323", monospace;
   letter-spacing: 0;
@@ -45,7 +71,7 @@ select {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid rgba(47, 65, 86, 0.72);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -56,8 +82,8 @@ select:focus-visible {
   align-items: stretch;
   justify-content: space-between;
   min-height: var(--topbar-h);
-  background: rgba(91, 125, 135, 0.9);
-  border-bottom: 2px solid rgba(246, 245, 240, 0.78);
+  background: var(--topbar-surface);
+  border-bottom: 2px solid var(--topbar-bottom-line);
   box-shadow: 0 12px 34px var(--shadow);
 }
 
@@ -76,13 +102,13 @@ select:focus-visible {
 .top-actions {
   flex: 0 1 auto;
   margin-left: auto;
-  background: rgba(241, 235, 216, 0.94);
+  background: var(--topbar-actions);
 }
 
 .stat-box,
 .top-btn {
   min-height: var(--topbar-h);
-  border-right: 2px solid rgba(246, 245, 240, 0.32);
+  border-right: 2px solid var(--topbar-divider);
 }
 
 .stat-box {
@@ -108,7 +134,7 @@ select:focus-visible {
 }
 
 .stat-label {
-  color: rgba(246, 245, 240, 0.68);
+  color: var(--stat-label);
 }
 
 .panel-title,
@@ -143,7 +169,7 @@ select:focus-visible {
 .top-btn:hover:not(:disabled),
 .top-btn:focus-visible,
 .top-btn.is-active {
-  background: rgba(253, 252, 251, 0.78);
+  background: var(--control-hover);
   color: var(--teal);
 }
 
@@ -154,7 +180,7 @@ select:focus-visible {
 
 .top-btn.is-primary:hover:not(:disabled),
 .top-btn.is-primary:focus-visible {
-  background: #3a5067;
+  background: var(--navy-hover);
   color: #fff;
 }
 
@@ -193,7 +219,7 @@ select:focus-visible {
   overflow: auto;
   padding-right: 0.12rem;
   pointer-events: auto;
-  scrollbar-color: rgba(91, 125, 135, 0.65) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
   scrollbar-width: thin;
   transition: opacity 160ms ease, transform 160ms ease;
 }
@@ -221,7 +247,7 @@ select:focus-visible {
   padding: 0.72rem;
   border: 1px solid var(--line);
   border-radius: 2px;
-  background: rgba(246, 245, 240, 0.92);
+  background: var(--surface);
   box-shadow: 0 10px 28px var(--shadow);
   backdrop-filter: blur(12px);
 }
@@ -243,7 +269,7 @@ select:focus-visible {
 .panel-section {
   border: 1px solid var(--line);
   border-radius: 2px;
-  background: rgba(246, 245, 240, 0.92);
+  background: var(--surface);
   box-shadow: 0 10px 28px var(--shadow);
   backdrop-filter: blur(12px);
 }
@@ -303,7 +329,7 @@ select,
   min-height: 2rem;
   border: 1px solid var(--line);
   border-radius: 2px;
-  background: rgba(253, 252, 251, 0.92);
+  background: var(--control-surface);
   color: var(--navy);
   cursor: pointer;
   font-size: 1.04rem;
@@ -384,7 +410,7 @@ input[type="range"]:focus {
 input[type="range"]::-webkit-slider-runnable-track {
   width: 100%;
   height: 6px;
-  background: rgba(47, 65, 86, 0.18);
+  background: var(--slider-track);
 }
 
 input[type="range"]::-webkit-slider-thumb {
@@ -394,14 +420,14 @@ input[type="range"]::-webkit-slider-thumb {
   border: 2px solid var(--paper);
   border-radius: 0;
   background: var(--teal);
-  box-shadow: 0 2px 8px rgba(47, 65, 86, 0.2);
+  box-shadow: 0 2px 8px var(--slider-shadow);
   -webkit-appearance: none;
 }
 
 input[type="range"]::-moz-range-track {
   height: 6px;
   border: 0;
-  background: rgba(47, 65, 86, 0.18);
+  background: var(--slider-track);
 }
 
 input[type="range"]::-moz-range-thumb {
@@ -410,7 +436,7 @@ input[type="range"]::-moz-range-thumb {
   border: 2px solid var(--paper);
   border-radius: 0;
   background: var(--teal);
-  box-shadow: 0 2px 8px rgba(47, 65, 86, 0.2);
+  box-shadow: 0 2px 8px var(--slider-shadow);
 }
 
 input:disabled,
@@ -428,18 +454,18 @@ button:disabled {
   padding: 0.56rem 0.76rem;
   border: 1px solid var(--line-strong);
   border-radius: 2px;
-  background: rgba(47, 65, 86, 0.9);
+  background: var(--status-info);
   color: var(--paper);
   box-shadow: 0 8px 20px var(--shadow);
   font-size: 1.05rem;
 }
 
 .status-banner.is-error {
-  background: rgba(128, 54, 54, 0.94);
+  background: var(--status-error);
 }
 
 .status-banner.is-ready {
-  background: rgba(55, 100, 76, 0.92);
+  background: var(--status-ready);
 }
 
 .overlay {
@@ -448,7 +474,7 @@ button:disabled {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(199, 215, 223, 0.44);
+  background: var(--overlay);
 }
 
 .overlay-box {
@@ -469,7 +495,7 @@ button:disabled {
 .spinner {
   width: 1rem;
   height: 1rem;
-  border: 2px solid rgba(91, 125, 135, 0.25);
+  border: 2px solid var(--spinner-border);
   border-top-color: var(--teal);
   border-radius: 50%;
   animation: spin 700ms linear infinite;

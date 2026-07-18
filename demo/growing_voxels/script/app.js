@@ -1,11 +1,11 @@
-import { initGPU, configureCanvas } from './gpu.js?v=2';
+import { initGPU, configureCanvas } from './gpu.js?v=4';
 import { loadModel, loadModelIndex } from './model-loader.js?v=4';
-import { NCACompute } from './nca.js?v=2';
-import { LPPNCompute } from './lppn.js?v=4';
-import { VoxelRenderer } from './renderer.js?v=6';
+import { NCACompute } from './nca.js?v=3';
+import { LPPNCompute } from './lppn.js?v=5';
+import { VoxelRenderer } from './renderer.js?v=8';
 import { OrbitCamera } from './camera.js?v=6';
 import { Interaction } from './interaction.js?v=7';
-import { UI } from './ui.js?v=7';
+import { UI } from './ui.js?v=8';
 
 class App {
   constructor() {
@@ -39,8 +39,9 @@ class App {
 
     // Fetch shaders
     this.shaders = {
-      nca: await fetch(new URL('../shaders/nca.wgsl?v=9', import.meta.url)).then(r => r.text()),
-      lppn: await fetch(new URL('../shaders/lppn.wgsl?v=7', import.meta.url)).then(r => r.text()),
+      nca: await fetch(new URL('../shaders/nca.wgsl?v=10', import.meta.url)).then(r => r.text()),
+      lppn: await fetch(new URL('../shaders/lppn.wgsl?v=10', import.meta.url)).then(r => r.text()),
+      livingMask: await fetch(new URL('../shaders/living_mask.wgsl?v=1', import.meta.url)).then(r => r.text()),
       compact: await fetch(new URL('../shaders/compact.wgsl?v=6', import.meta.url)).then(r => r.text()),
       render: await fetch(new URL('../shaders/render.wgsl?v=7', import.meta.url)).then(r => r.text()),
     };
@@ -115,7 +116,7 @@ class App {
     if (this.lppn) {
       // Rebuilding, might need to cleanup old buffers if not GC'd, but GC should handle it
     }
-    this.lppn = new LPPNCompute(this.device, this.model, this.shaders.lppn, this.hasF16);
+    this.lppn = new LPPNCompute(this.device, this.model, this.shaders.lppn, this.shaders.livingMask, this.hasF16);
     const renderSize = this.lppn.renderSize;
     this.renderer = new VoxelRenderer(this.device, this.format, renderSize, this.shaders.compact, this.shaders.render, this.model.livingThreshold, this.model.maxOccupancy, this.model.rotateModel);
     this.interaction = new Interaction(this.camera, this.nca, renderSize, this.model.rotateModel);
@@ -144,19 +145,22 @@ class App {
 
     if (!this.nca || !this.lppn || !this.renderer) return;
 
-    const encoder = this.device.createCommandEncoder();
-
-    // NCA steps
+    // Submit each NCA step separately. Its uniform and random buffers are
+    // queue-written per step, so batching multiple steps in one command buffer
+    // would make every step observe only the final write.
     if (this.running) {
       const rate = this.ui.simRate;
       this.stepAccumulator = (this.stepAccumulator || 0) + rate;
       const stepsThisFrame = Math.floor(this.stepAccumulator);
       this.stepAccumulator -= stepsThisFrame;
       for (let i = 0; i < stepsThisFrame; i++) {
-        this.nca.encode(encoder);
+        const ncaEncoder = this.device.createCommandEncoder();
+        this.nca.encode(ncaEncoder);
+        this.device.queue.submit([ncaEncoder.finish()]);
       }
     }
 
+    const encoder = this.device.createCommandEncoder();
     const crossSection = this.ui.crossSection;
     const ncaStep = this.nca.step;
     const perfMode = this.ui.perfMode;
@@ -222,7 +226,7 @@ class App {
 
 const app = new App();
 app.init().catch(err => {
-  document.body.innerHTML = `<div style="color:#f44;padding:40px;font-size:18px;">
+  document.body.innerHTML = `<div class="fatal-error">
     <h2>WebGPU Error</h2><p>${err.message}</p>
     <p>Make sure you're using Chrome 113+ or another WebGPU-capable browser.</p>
   </div>`;

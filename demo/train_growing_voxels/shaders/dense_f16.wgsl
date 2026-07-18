@@ -24,14 +24,14 @@ fn dense_forward(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (index >= total) { return; }
   let row = index / params.output_dim;
   let output_channel = index - row * params.output_dim;
-  var sum = biases[output_channel];
+  var sum = f32(biases[output_channel]);
   for (var input_channel = 0u; input_channel < params.input_dim; input_channel++) {
-    sum += input_values[row * params.input_dim + input_channel]
-      * weights[input_channel * params.output_dim + output_channel];
+    sum += f32(input_values[row * params.input_dim + input_channel])
+      * f32(weights[input_channel * params.output_dim + output_channel]);
   }
-  output_values[index] = select(
+  output_values[index] = f16(select(
     sum,
-    sin(f16(params.omega) * sum),
+    sin(params.omega * sum),
     params.omega > 0.0,
-  );
+  ));
 }

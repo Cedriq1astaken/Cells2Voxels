@@ -8,7 +8,14 @@ export async function initGPU() {
   if (!adapter.features.has('shader-f16')) {
     throw new Error('This GPU/browser does not support WebGPU shader-f16.');
   }
-  const device = await adapter.requestDevice({ requiredFeatures: ['shader-f16'] });
+  const device = await adapter.requestDevice({
+    requiredFeatures: ['shader-f16'],
+    requiredLimits: {
+      maxBufferSize: adapter.limits.maxBufferSize,
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+      maxStorageBuffersPerShaderStage: adapter.limits.maxStorageBuffersPerShaderStage,
+    },
+  });
 
   device.addEventListener('uncapturederror', event => {
     console.error('WebGPU error:', event.error);

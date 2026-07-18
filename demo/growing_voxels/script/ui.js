@@ -183,8 +183,8 @@ export class UI {
 
   setF16(supported) {
     if (this.els.statF16) {
-      this.els.statF16.textContent = supported ? 'Native' : 'F32';
-      this.els.statF16.className = supported ? 'stat-val ok' : 'stat-val warn';
+      this.els.statF16.textContent = supported ? 'F16' : 'F32';
+      this.els.statF16.className = 'stat-val ok';
     }
   }
 

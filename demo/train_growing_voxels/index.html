@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=14">
+  <link rel="stylesheet" href="style.css?v=16">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 
@@ -21,6 +21,8 @@
           id="stat-iter">0</span></div>
       <div class="stat-box stat-wide"><span class="stat-label">VOXELS</span><span class="stat-val"
           id="stat-voxels">0</span></div>
+      <div class="stat-box stat-wide"><span class="stat-label">GPU EST.</span><span class="stat-val"
+          id="stat-memory">-</span></div>
     </div>
     <div class="top-actions">
       <button id="btn-start" class="top-btn is-primary" type="button" disabled>START</button>
@@ -82,24 +84,24 @@
       <section class="panel-section compact-section two-column">
         <label for="cfg-scale">LPPN SCALE</label>
         <select id="cfg-scale">
-          <option value="8">8X</option>
-          <option value="4" selected>4X</option>
+          <option value="8" selected>8X</option>
+          <option value="4">4X</option>
           <option value="2">2X</option>
           <option value="1">1X</option>
         </select>
       </section>
 
       <section class="panel-section compact-section">
-        <label for="cfg-channels">CHANNELS <span id="val-channels" class="slider-val">32</span></label>
-        <input type="range" id="cfg-channels" min="8" max="64" step="4" value="32">
+        <label for="cfg-channels">CHANNELS <span id="val-channels" class="slider-val">48</span></label>
+        <input type="range" id="cfg-channels" min="8" max="64" step="4" value="48">
       </section>
 
       <section class="panel-section compact-section two-column">
         <label for="cfg-width">NCA WIDTH</label>
         <select id="cfg-width">
           <option value="64">64 FAST</option>
-          <option value="128">128 STANDARD</option>
-          <option value="256" selected>256 PAPER</option>
+          <option value="128" selected>128 STANDARD</option>
+          <option value="256">256 PAPER</option>
         </select>
       </section>
 
@@ -109,10 +111,10 @@
       </section>
 
       <section class="panel-section compact-section">
-        <label for="cfg-step-min">ROLLOUT <span id="val-steps" class="slider-val">32-64</span></label>
+        <label for="cfg-step-min">ROLLOUT <span id="val-steps" class="slider-val">8-24</span></label>
         <div class="range-pair">
-          <input type="range" id="cfg-step-min" min="8" max="96" step="8" value="32">
-          <input type="range" id="cfg-step-max" min="8" max="96" step="8" value="64">
+          <input type="range" id="cfg-step-min" min="8" max="96" step="8" value="8">
+          <input type="range" id="cfg-step-max" min="8" max="96" step="8" value="24">
         </div>
       </section>
 
@@ -133,7 +135,7 @@
     </aside>
   </div>
 
-  <script type="module" src="script/app.js?v=14"></script>
+  <script type="module" src="script/app.js?v=23"></script>
 </body>
 
 </html>

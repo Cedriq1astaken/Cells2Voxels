@@ -1,4 +1,4 @@
-import { buildPerceptionKernels, MODEL_CONSTANTS } from './trainer.js';
+import { buildPerceptionKernels, MODEL_CONSTANTS } from './trainer.js?v=20';
 
 export async function exportTrainerModel(trainer, options) {
   if (!window.JSZip) throw new Error('JSZip did not load.');
@@ -69,7 +69,7 @@ export async function exportTrainerModel(trainer, options) {
       lppn_hidden_omega_0: MODEL_CONSTANTS.hiddenOmega,
       edge_loss_weight: 0,
       iterations: info.iteration,
-      gpu_used: 'WebGPU shader-f16',
+      gpu_used: 'WebGPU f16 forward/backward + f32 Adam master',
       target_path: options.sourceName || name,
       pool_size: info.poolSize,
       browser_export: true,

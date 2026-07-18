@@ -40,6 +40,9 @@ export class NCACompute {
     const stateSize = C * S * S * S * this.bpe;
     this.stateA = createEmptyBuffer(device, stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     this.stateB = createEmptyBuffer(device, stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+    // Candidate updates must finish globally before the 3x3x3 post-living
+    // mask samples neighboring cells.
+    this.updatedState = createEmptyBuffer(device, stateSize, GPUBufferUsage.STORAGE);
     this.current = 0;
 
     // NOTE: percBuf was previously allocated here (C * K * S^3 * 4 bytes = 356 MB for Pine Tree!)
@@ -80,7 +83,7 @@ export class NCACompute {
 
     const bindGroupLayout = device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // state_in
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // state_in
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // state_out
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // perc_weights
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // w1
@@ -88,14 +91,19 @@ export class NCACompute {
         { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // w2
         { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },           // uniforms
         { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // random
+        { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // original state
       ],
     });
 
     this.pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
 
-    this.pipeline = device.createComputePipeline({
+    this.updatePipeline = device.createComputePipeline({
       layout: this.pipelineLayout,
-      compute: { module: shaderModule, entryPoint: 'nca_step' },
+      compute: { module: shaderModule, entryPoint: 'nca_update' },
+    });
+    this.livingMaskPipeline = device.createComputePipeline({
+      layout: this.pipelineLayout,
+      compute: { module: shaderModule, entryPoint: 'apply_living_mask' },
     });
 
     this.bindGroupLayout = bindGroupLayout;
@@ -105,7 +113,7 @@ export class NCACompute {
 
   _createBindGroups() {
     const { device, bindGroupLayout } = this;
-    const makeGroup = (stateIn, stateOut) => device.createBindGroup({
+    const makeGroup = (stateIn, stateOut, originalState) => device.createBindGroup({
       layout: bindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: stateIn } },
@@ -116,10 +124,13 @@ export class NCACompute {
         { binding: 5, resource: { buffer: this.adaptW2 } },
         { binding: 6, resource: { buffer: this.uniformBuf } },
         { binding: 7, resource: { buffer: this.randomBuf } },
+        { binding: 8, resource: { buffer: originalState } },
       ],
     });
-    this.bindGroupAB = makeGroup(this.stateA, this.stateB);
-    this.bindGroupBA = makeGroup(this.stateB, this.stateA);
+    this.updateGroupA = makeGroup(this.stateA, this.updatedState, this.stateA);
+    this.updateGroupB = makeGroup(this.stateB, this.updatedState, this.stateB);
+    this.maskGroupAB = makeGroup(this.updatedState, this.stateB, this.stateA);
+    this.maskGroupBA = makeGroup(this.updatedState, this.stateA, this.stateB);
   }
 
   initSeed() {
@@ -175,12 +186,19 @@ export class NCACompute {
     for (let i = 0; i < rng.length; i++) rng[i] = Math.random();
     this.device.queue.writeBuffer(this.randomBuf, 0, rng);
 
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.current === 0 ? this.bindGroupAB : this.bindGroupBA);
     const wg = Math.ceil(S / 4);
-    pass.dispatchWorkgroups(wg, wg, wg);
-    pass.end();
+    const updatePass = encoder.beginComputePass();
+    updatePass.setPipeline(this.updatePipeline);
+    updatePass.setBindGroup(0, this.current === 0 ? this.updateGroupA : this.updateGroupB);
+    updatePass.dispatchWorkgroups(wg, wg, wg);
+    updatePass.end();
+
+    // A pass boundary synchronizes updatedState before neighborhood reads.
+    const maskPass = encoder.beginComputePass();
+    maskPass.setPipeline(this.livingMaskPipeline);
+    maskPass.setBindGroup(0, this.current === 0 ? this.maskGroupAB : this.maskGroupBA);
+    maskPass.dispatchWorkgroups(wg, wg, wg);
+    maskPass.end();
 
     this.current = 1 - this.current;
     this.step++;

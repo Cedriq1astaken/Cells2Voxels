@@ -1,5 +1,6 @@
-import { createBuffer, createEmptyBuffer } from './gpu.js';
-import { float16ToFloat32, fromFloat16Array, toFloat16Array } from './f16.js';
+import { createBuffer, createEmptyBuffer } from './gpu.js?v=18';
+import { float16ToFloat32, toFloat16Array } from './f16.js?v=18';
+
 
 const KERNEL_COUNT = 5;
 const LIVING_CHANNEL = 3;
@@ -11,13 +12,12 @@ const COORD_FREQUENCIES = 1;
 const TRAIN_SAMPLE_LIMIT = 8192;
 const POOL_BUDGET_BYTES = 64 * 1024 * 1024;
 const PARAM_STRIDE = 256;
-const PARAM_CAPACITY = 4096;
+const SAMPLE_MODE_UNIFORM = 0;
+const SAMPLE_MODE_DENSE_PREVIEW = 1;
+
 
 export class VoxelTrainer {
   constructor(device, config, targetData, shaderSources, callbacks = {}) {
-    if (!device.features.has('shader-f16')) {
-      throw new Error('This GPU does not expose the WebGPU shader-f16 feature.');
-    }
     this.device = device;
     this.queue = device.queue;
     this.config = { ...config };
@@ -53,6 +53,12 @@ export class VoxelTrainer {
       8,
       Math.min(64, Math.floor(POOL_BUDGET_BYTES / (this.stateElements * Uint16Array.BYTES_PER_ELEMENT))),
     );
+    const sampleSet = buildSampleIndex(targetData);
+    this.foregroundCount = sampleSet.foregroundCount;
+    this.backgroundCount = sampleSet.backgroundCount;
+    this.sampleIndices = sampleSet.indices;
+    const previewChunks = Math.ceil(this.totalVoxels / this.maxRows);
+    this.paramCapacity = this.config.stepMax * 10 + previewChunks * 6 + 66;
     this.previewInterval = config.previewInterval ?? (this.targetSize <= 32 ? 8 : 16);
     this.shaderSources = shaderSources;
     this.resources = new Set();
@@ -73,8 +79,9 @@ export class VoxelTrainer {
     const shader = key => replaceTemplate(this.shaderSources[key], replacements);
     this.layouts = {
       ncaForward: this.createLayout([
-        'storage', 'storage', 'read-only-storage', 'read-only-storage',
-        'read-only-storage', 'read-only-storage', 'uniform',
+        'storage', 'storage', 'storage', 'storage',
+        'read-only-storage', 'read-only-storage', 'read-only-storage', 'read-only-storage',
+        'uniform',
       ]),
       dense: this.createLayout([
         'read-only-storage', 'read-only-storage', 'read-only-storage', 'storage', 'uniform',
@@ -84,14 +91,15 @@ export class VoxelTrainer {
         'read-only-storage', 'storage', 'uniform',
       ]),
       loss: this.createLayout([
-        'read-only-storage', 'read-only-storage', 'read-only-storage',
+        'read-only-storage', 'read-only-storage', 'read-only-storage', 'read-only-storage',
         'storage', 'storage', 'storage', 'uniform',
       ]),
       ncaBackward: this.createLayout([
         'read-only-storage', 'read-only-storage', 'read-only-storage', 'read-only-storage',
         'storage', 'storage', 'storage', 'uniform',
       ]),
-      optimizer: this.createLayout(['storage', 'storage', 'storage', 'storage', 'uniform']),
+      optimizer: this.createLayout(['storage', 'storage', 'storage', 'storage', 'storage', 'uniform']),
+      poolRecovery: this.createLayout(['read-only-storage', 'read-only-storage', 'storage', 'storage', 'uniform']),
     };
 
     const modules = {
@@ -101,6 +109,7 @@ export class VoxelTrainer {
       loss: this.createModule('f16_loss', shader('loss')),
       ncaBackward: this.createModule('f16_nca_backward', shader('ncaBackward')),
       optimizer: this.createModule('f16_optimizer', this.shaderSources.optimizer),
+      poolRecovery: this.createModule('f16_pool_recovery', shader('poolRecovery')),
     };
     const pipeline = (family, entryPoint) => this.device.createComputePipeline({
       label: `${family}_${entryPoint}`,
@@ -109,6 +118,7 @@ export class VoxelTrainer {
     });
     this.pipelines = {
       ncaHidden: pipeline('ncaForward', 'nca_hidden'),
+      ncaCandidate: pipeline('ncaForward', 'nca_candidate'),
       ncaStep: pipeline('ncaForward', 'nca_step'),
       denseForward: pipeline('dense', 'dense_forward'),
       activationDelta: pipeline('denseBackward', 'activation_delta'),
@@ -129,6 +139,8 @@ export class VoxelTrainer {
       accumulateB1: pipeline('ncaBackward', 'accumulate_b1_gradient'),
       normalizeGradient: pipeline('optimizer', 'normalize_gradient'),
       adamUpdate: pipeline('optimizer', 'adam_update'),
+      inspectPoolAlive: pipeline('poolRecovery', 'inspect_pool_alive'),
+      restorePoolState: pipeline('poolRecovery', 'restore_or_reseed'),
     };
   }
 
@@ -156,6 +168,8 @@ export class VoxelTrainer {
   buildModel() {
     const perceptionDim = this.channels * KERNEL_COUNT;
     const hiddenBound = Math.sqrt(6 / LPPN_WIDTH) / HIDDEN_OMEGA;
+    const firstBiasBound = 1 / Math.sqrt(this.inputDim);
+    const hiddenBiasBound = 1 / Math.sqrt(LPPN_WIDTH);
     this.parameters = [];
     this.parameterMap = {};
     this.addParameter(
@@ -176,27 +190,31 @@ export class VoxelTrainer {
       [this.inputDim, LPPN_WIDTH],
       randomUniform(this.inputDim * LPPN_WIDTH, 1 / this.inputDim),
     );
-    this.addParameter('l0b', [LPPN_WIDTH], new Float32Array(LPPN_WIDTH));
+    this.addParameter('l0b', [LPPN_WIDTH], randomUniform(LPPN_WIDTH, firstBiasBound));
     this.addParameter('l1w', [LPPN_WIDTH, LPPN_WIDTH], randomUniform(LPPN_WIDTH ** 2, hiddenBound));
-    this.addParameter('l1b', [LPPN_WIDTH], new Float32Array(LPPN_WIDTH));
+    this.addParameter('l1b', [LPPN_WIDTH], randomUniform(LPPN_WIDTH, hiddenBiasBound));
     this.addParameter('l2w', [LPPN_WIDTH, LPPN_WIDTH], randomUniform(LPPN_WIDTH ** 2, hiddenBound));
-    this.addParameter('l2b', [LPPN_WIDTH], new Float32Array(LPPN_WIDTH));
+    this.addParameter('l2b', [LPPN_WIDTH], randomUniform(LPPN_WIDTH, hiddenBiasBound));
     this.addParameter('l3w', [LPPN_WIDTH, 4], randomUniform(LPPN_WIDTH * 4, hiddenBound));
-    this.addParameter('l3b', [4], new Float32Array(4));
+    this.addParameter('l3b', [4], randomUniform(4, hiddenBiasBound));
   }
 
   addParameter(name, shape, values, normalize = false) {
     const count = shape.reduce((product, value) => product * value, 1);
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
+    const initialMasterWeights = new Float32Array(values);
     const parameter = {
       name,
       shape,
       count,
       normalize,
-      weight: this.track(createBuffer(this.device, toFloat16Array(values), usage)),
+      // The f16 copy is used by every forward/backward shader. Adam updates
+      // the f32 master copy, then refreshes this mirror after each step.
+      weight: this.track(createBuffer(this.device, toFloat16Array(initialMasterWeights), usage)),
       gradient: this.track(createEmptyBuffer(this.device, alignedF16Bytes(count), usage)),
-      firstMoment: this.track(createEmptyBuffer(this.device, alignedF16Bytes(count), usage)),
-      secondMoment: this.track(createEmptyBuffer(this.device, alignedF16Bytes(count), usage)),
+      masterWeight: this.track(createBuffer(this.device, initialMasterWeights, usage)),
+      firstMoment: this.track(createEmptyBuffer(this.device, alignedF32Bytes(count), usage)),
+      secondMoment: this.track(createEmptyBuffer(this.device, alignedF32Bytes(count), usage)),
     };
     this.parameters.push(parameter);
     this.parameterMap[name] = parameter;
@@ -207,8 +225,9 @@ export class VoxelTrainer {
     const maxSteps = this.config.stepMax;
     const stateHistoryCount = (maxSteps + 1) * this.stateElements;
     const hiddenHistoryCount = maxSteps * this.cells * this.fcDim;
+    const livingHistoryCount = maxSteps * this.cells;
     this.paramsBuffer = this.track(this.device.createBuffer({
-      size: PARAM_STRIDE * PARAM_CAPACITY,
+      size: PARAM_STRIDE * this.paramCapacity,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     }));
     this.dummyBuffers = Array.from({ length: 8 }, () => (
@@ -216,6 +235,11 @@ export class VoxelTrainer {
     ));
     this.dummyBuffer = this.dummyBuffers[0];
     this.targetBuffer = this.track(createBuffer(this.device, toFloat16Array(targetData), storage));
+    this.sampleIndexBuffer = this.track(createBuffer(
+      this.device,
+      this.sampleIndices.length > 0 ? this.sampleIndices : new Uint32Array([0]),
+      storage,
+    ));
     this.kernelBuffer = this.track(createBuffer(
       this.device,
       toFloat16Array(buildPerceptionKernels()),
@@ -223,8 +247,11 @@ export class VoxelTrainer {
     ));
     this.stateHistory = this.track(createEmptyBuffer(this.device, alignedF16Bytes(stateHistoryCount), storage));
     this.hiddenHistory = this.track(createEmptyBuffer(this.device, alignedF16Bytes(hiddenHistoryCount), storage));
+    this.candidateState = this.track(createEmptyBuffer(this.device, alignedF16Bytes(this.stateElements), storage));
+    this.livingHistory = this.track(createEmptyBuffer(this.device, alignedF16Bytes(livingHistoryCount), storage));
     this.poolBuffer = this.track(createBuffer(this.device, this.makeInitialPool(), storage));
     this.seedBuffer = this.track(createBuffer(this.device, this.makeSeed(), storage));
+    this.poolAliveFlag = this.track(createEmptyBuffer(this.device, 4, storage));
 
     const rows = this.maxRows;
     this.lppnInput = this.track(createEmptyBuffer(this.device, alignedF16Bytes(rows * this.inputDim), storage));
@@ -287,6 +314,7 @@ export class VoxelTrainer {
     const seed = this.makeSeed();
     this.poolStateBytes = alignedF16Bytes(this.stateElements);
     const wordsPerState = this.poolStateBytes / Uint16Array.BYTES_PER_ELEMENT;
+    this.poolStateWords = wordsPerState;
     const values = new Uint16Array(this.poolSize * wordsPerState);
     for (let index = 0; index < this.poolSize; index++) {
       values.set(seed, index * wordsPerState);
@@ -305,7 +333,7 @@ export class VoxelTrainer {
   }
 
   allocateParams(data) {
-    if (this.paramsOffset >= PARAM_CAPACITY) {
+    if (this.paramsOffset >= this.paramCapacity) {
       throw new Error('The f16 command parameter arena is exhausted.');
     }
     const offset = this.paramsOffset++ * PARAM_STRIDE;
@@ -340,10 +368,17 @@ export class VoxelTrainer {
     return this.makeParams(
       [
         [0, rows], [1, sampleSeed], [2, sampleOffset], [3, sampleMode],
-        [4, finalStep], [5, this.totalVoxels], [6, this.stateElements],
+        [4, finalStep], [5, this.foregroundCount], [6, this.backgroundCount],
       ],
       [[8, this.scale], [9, this.config.overflowWeight]],
     );
+  }
+
+  poolRecoveryParams(poolIndex) {
+    return this.makeParams([
+      [0, poolIndex * this.poolStateWords],
+      [1, this.stateElements],
+    ]);
   }
 
   optimizerParams(parameter, iteration) {
@@ -357,7 +392,7 @@ export class VoxelTrainer {
         [6, beta2],
         [7, 1 - beta1 ** iteration],
         [8, 1 - beta2 ** iteration],
-        [9, 0.0001],
+        [9, 1e-8],
       ],
     );
   }
@@ -390,10 +425,21 @@ export class VoxelTrainer {
     return this.bindGroup('nca-forward', this.layouts.ncaForward, [
       this.stateHistory,
       this.hiddenHistory,
+      this.candidateState,
+      this.livingHistory,
       this.kernelBuffer,
       p.ncaW1.weight,
       p.ncaB1.weight,
       p.ncaW2.weight,
+    ]);
+  }
+
+  poolRecoveryBindGroup() {
+    return this.bindGroup('pool-recovery', this.layouts.poolRecovery, [
+      this.poolBuffer,
+      this.seedBuffer,
+      this.stateHistory,
+      this.poolAliveFlag,
     ]);
   }
 
@@ -413,7 +459,7 @@ export class VoxelTrainer {
     return this.bindGroup(
       cacheKey,
       this.layouts.loss,
-      [input0, input1, input2, output0, output1, output2],
+      [input0, input1, input2, this.sampleIndexBuffer, output0, output1, output2],
     );
   }
 
@@ -552,7 +598,7 @@ export class VoxelTrainer {
           gradientNext,
           this.dNcaOutput,
           this.baseStateGradient,
-          this.dummyBuffer,
+          this.livingHistory,
         ),
         this.stateElements,
         params,
@@ -660,7 +706,7 @@ export class VoxelTrainer {
   encodePreview(pass, finalStep) {
     for (let offset = 0; offset < this.totalVoxels; offset += this.maxRows) {
       const rows = Math.min(this.maxRows, this.totalVoxels - offset);
-      const params = this.lossParams(rows, 0, offset, 1, finalStep);
+      const params = this.lossParams(rows, 0, offset, SAMPLE_MODE_DENSE_PREVIEW, finalStep);
       this.dispatch(
         pass,
         this.pipelines.buildInput,
@@ -671,7 +717,7 @@ export class VoxelTrainer {
           this.dummyBuffer,
           this.lppnInput,
           this.dummyBuffer,
-          this.dummyBuffer,
+          this.lossValues,
         ),
         rows * this.inputDim,
         params,
@@ -687,7 +733,7 @@ export class VoxelTrainer {
           this.dummyBuffer,
           this.previewBuffer,
           this.dummyBuffer,
-          this.dummyBuffer,
+          this.lossValues,
         ),
         rows * 4,
         params,
@@ -701,7 +747,13 @@ export class VoxelTrainer {
       const bindGroup = this.bindGroup(
         `optimizer-${parameter.name}`,
         this.layouts.optimizer,
-        [parameter.weight, parameter.gradient, parameter.firstMoment, parameter.secondMoment],
+        [
+          parameter.weight,
+          parameter.gradient,
+          parameter.masterWeight,
+          parameter.firstMoment,
+          parameter.secondMoment,
+        ],
       );
       if (parameter.normalize) {
         this.dispatch(pass, this.pipelines.normalizeGradient, bindGroup, 1, params);
@@ -726,7 +778,7 @@ export class VoxelTrainer {
 
     const poolIndex = Math.floor(Math.random() * this.poolSize);
     const repetition = Math.floor(this.iteration / 4000) % 4;
-    const injectInterval = 4 * 2 ** repetition;
+    const injectInterval = 2 * 2 ** repetition;
     const injectSeed = nextIteration % injectInterval === 0;
     const rolloutRange = Math.max(1, this.config.stepMax - this.config.stepMin);
     const rolloutSteps = this.config.stepMin + Math.floor(Math.random() * rolloutRange);
@@ -739,13 +791,9 @@ export class VoxelTrainer {
     if (injectSeed) {
       encoder.copyBufferToBuffer(this.seedBuffer, 0, this.stateHistory, 0, stateBytes);
     } else {
-      encoder.copyBufferToBuffer(
-        this.poolBuffer,
-        poolIndex * stateBytes,
-        this.stateHistory,
-        0,
-        stateBytes,
-      );
+      // A collapsed state is absorbing under the hard living gate. Check the
+      // selected pool entry on-GPU and restore a fresh seed when it is dead.
+      encoder.clearBuffer(this.poolAliveFlag);
     }
     for (const parameter of this.parameters) {
       encoder.clearBuffer(parameter.gradient);
@@ -756,6 +804,12 @@ export class VoxelTrainer {
     }
 
     const pass = encoder.beginComputePass({ label: 'f16_training' });
+    if (!injectSeed) {
+      const recoveryParams = this.poolRecoveryParams(poolIndex);
+      const recoveryBindGroup = this.poolRecoveryBindGroup();
+      this.dispatch(pass, this.pipelines.inspectPoolAlive, recoveryBindGroup, this.cells, recoveryParams);
+      this.dispatch(pass, this.pipelines.restorePoolState, recoveryBindGroup, this.stateElements, recoveryParams);
+    }
     const ncaBindGroup = this.ncaForwardBindGroup();
     for (let step = 0; step < rolloutSteps; step++) {
       const params = this.ncaParams(step, rolloutSteps, randomSeed);
@@ -766,10 +820,11 @@ export class VoxelTrainer {
         this.cells * this.fcDim,
         params,
       );
+      this.dispatch(pass, this.pipelines.ncaCandidate, ncaBindGroup, this.stateElements, params);
       this.dispatch(pass, this.pipelines.ncaStep, ncaBindGroup, this.stateElements, params);
     }
 
-    const lossParams = this.lossParams(this.trainRows, sampleSeed, 0, 0, rolloutSteps);
+    const lossParams = this.lossParams(this.trainRows, sampleSeed, 0, SAMPLE_MODE_UNIFORM, rolloutSteps);
     this.dispatch(
       pass,
       this.pipelines.buildInput,
@@ -780,7 +835,7 @@ export class VoxelTrainer {
         this.dummyBuffer,
         this.lppnInput,
         this.dummyBuffer,
-        this.dummyBuffer,
+        this.lossValues,
       ),
       this.trainRows * this.inputDim,
       lossParams,
@@ -834,7 +889,7 @@ export class VoxelTrainer {
     );
     this.encodeNcaBackward(pass, rolloutSteps, randomSeed);
     if (keepPreview) this.encodePreview(pass, rolloutSteps);
-    this.encodeOptimizer(pass, nextIteration);
+    this.encodeOptimizer(pass, this.iteration % 4000 + 1);
     pass.end();
 
     encoder.copyBufferToBuffer(
@@ -850,8 +905,7 @@ export class VoxelTrainer {
 
     if (keepPreview) {
       await this.lossReadback.mapAsync(GPUMapMode.READ);
-      const bits = new DataView(this.lossReadback.getMappedRange(0, 8)).getUint16(0, true);
-      const loss = float16ToFloat32(bits);
+      const loss = float16ToFloat32(new DataView(this.lossReadback.getMappedRange(0, 8)).getUint16(0, true));
       this.lossReadback.unmap();
       if (!Number.isFinite(loss)) throw new Error(`Loss became invalid after iteration ${this.iteration}.`);
       const reportTime = performance.now();
@@ -914,19 +968,23 @@ export class VoxelTrainer {
   }
 
   async getExportInfo() {
+    const readbackBytes = parameter => Math.max(
+      8,
+      Math.ceil(parameter.count * Float32Array.BYTES_PER_ELEMENT / 8) * 8,
+    );
     const readbacks = this.parameters.map(parameter => this.track(createEmptyBuffer(
       this.device,
-      Math.max(8, Math.ceil(parameter.count * Uint16Array.BYTES_PER_ELEMENT / 8) * 8),
+      readbackBytes(parameter),
       GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     )));
     const encoder = this.device.createCommandEncoder();
     this.parameters.forEach((parameter, index) => {
       encoder.copyBufferToBuffer(
-        parameter.weight,
+        parameter.masterWeight,
         0,
         readbacks[index],
         0,
-        Math.max(8, Math.ceil(parameter.count * Uint16Array.BYTES_PER_ELEMENT / 8) * 8),
+        readbackBytes(parameter),
       );
     });
     this.queue.submit([encoder.finish()]);
@@ -934,8 +992,8 @@ export class VoxelTrainer {
     await Promise.all(readbacks.map(async (buffer, index) => {
       await buffer.mapAsync(GPUMapMode.READ);
       const parameter = this.parameters[index];
-      const values = new Uint16Array(buffer.getMappedRange(), 0, parameter.count);
-      variables[parameter.name] = fromFloat16Array(values);
+      const values = new Float32Array(buffer.getMappedRange(), 0, parameter.count);
+      variables[parameter.name] = new Float32Array(values);
       buffer.unmap();
       buffer.destroy();
       this.resources.delete(buffer);
@@ -1009,12 +1067,36 @@ function alignedF16Bytes(count) {
   return Math.max(4, Math.ceil(count * Uint16Array.BYTES_PER_ELEMENT / 4) * 4);
 }
 
+function alignedF32Bytes(count) {
+  return Math.max(4, count * Float32Array.BYTES_PER_ELEMENT);
+}
+
 function replaceTemplate(source, replacements) {
   if (!source) throw new Error('A required f16 training shader did not load.');
   return Object.entries(replacements).reduce(
     (code, [key, value]) => code.replaceAll(`{{${key}}}`, String(value)),
     source,
   );
+}
+
+function buildSampleIndex(targetData) {
+  const voxelCount = Math.floor(targetData.length / 4);
+  let foregroundCount = 0;
+  for (let voxel = 0; voxel < voxelCount; voxel++) {
+    if (targetData[voxel * 4 + 3] > LIVING_THRESHOLD) foregroundCount++;
+  }
+  const backgroundCount = voxelCount - foregroundCount;
+  const indices = new Uint32Array(voxelCount);
+  let foregroundOffset = 0;
+  let backgroundOffset = foregroundCount;
+  for (let voxel = 0; voxel < voxelCount; voxel++) {
+    if (targetData[voxel * 4 + 3] > LIVING_THRESHOLD) {
+      indices[foregroundOffset++] = voxel;
+    } else {
+      indices[backgroundOffset++] = voxel;
+    }
+  }
+  return { indices, foregroundCount, backgroundCount };
 }
 
 function randomUniform(count, bound) {

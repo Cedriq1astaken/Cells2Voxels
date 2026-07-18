@@ -4,9 +4,7 @@ export async function initGPU() {
   if (!adapter) throw new Error('No WebGPU adapter found.');
 
   const wantF16 = adapter.features.has('shader-f16');
-  const requiredFeatures = [];
-  if (wantF16) requiredFeatures.push('shader-f16');
-
+  const requiredFeatures = wantF16 ? ['shader-f16'] : [];
   const device = await adapter.requestDevice({
     requiredFeatures,
     requiredLimits: {
@@ -17,8 +15,7 @@ export async function initGPU() {
     },
   });
 
-  const hasF16 = device.features.has('shader-f16');
-  return { adapter, device, hasF16 };
+  return { adapter, device, hasF16: device.features.has('shader-f16') };
 }
 
 export function configureCanvas(device, canvas) {

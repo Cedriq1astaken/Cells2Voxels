@@ -1,15 +1,15 @@
-import { OrbitCamera } from './camera.js?v=14';
-import { exportTrainerModel } from './exporter.js?v=14';
-import { configureCanvas, initGPU } from './gpu.js?v=14';
-import { VoxelRenderer } from './renderer.js?v=14';
-import { VoxelTrainer } from './trainer.js?v=14';
-import { parseObjAndVol, parseVox } from './voxelizer.js?v=14';
+import { OrbitCamera } from './camera.js?v=18';
+import { exportTrainerModel } from './exporter.js?v=19';
+import { configureCanvas, initGPU } from './gpu.js?v=18';
+import { VoxelRenderer } from './renderer.js?v=19';
+import { VoxelTrainer } from './trainer.js?v=20';
+import { parseObjAndVol, parseVox } from './voxelizer.js?v=18';
 
 const ui = Object.fromEntries([
   'canvas', 'left-panel', 'loading-overlay', 'loading-text', 'status-banner',
   'file-input', 'vol-input', 'vol-upload-container', 'upload-status', 'vol-status', 'target-name',
   'btn-start', 'btn-stop', 'btn-reset', 'btn-export', 'btn-controls',
-  'stat-ips', 'stat-loss', 'stat-iter', 'stat-voxels', 'model-shape',
+  'stat-ips', 'stat-loss', 'stat-iter', 'stat-voxels', 'stat-memory', 'model-shape',
   'cfg-res', 'cfg-native-res', 'val-res', 'cfg-scale', 'cfg-channels', 'val-channels',
   'cfg-width', 'cfg-lr', 'val-lr', 'cfg-step-min', 'cfg-step-max', 'val-steps',
   'cfg-seed-radius', 'val-seed-radius',
@@ -34,7 +34,7 @@ const uploaded = { vox: null, obj: null, vol: null };
 async function initialize() {
   setupUI();
   try {
-    setStatus('Starting WebGPU f16');
+    setStatus('Starting WebGPU f16 training');
     const gpu = await initGPU();
     device = gpu.device;
     ({ context, format } = configureCanvas(device, ui.canvas));
@@ -68,6 +68,7 @@ function setupUI() {
   });
   ui.cfgChannels.addEventListener('input', () => {
     ui.valChannels.textContent = ui.cfgChannels.value;
+    updateMemoryEstimate();
   });
   ui.cfgLr.addEventListener('input', () => {
     ui.valLr.textContent = Number(ui.cfgLr.value).toFixed(4);
@@ -79,6 +80,7 @@ function setupUI() {
     const low = Math.min(Number(ui.cfgStepMin.value), Number(ui.cfgStepMax.value));
     const high = Math.max(Number(ui.cfgStepMin.value), Number(ui.cfgStepMax.value));
     ui.valSteps.textContent = `${low}-${high}`;
+    updateMemoryEstimate();
   };
   ui.cfgStepMin.addEventListener('input', updateSteps);
   ui.cfgStepMax.addEventListener('input', updateSteps);
@@ -179,6 +181,7 @@ async function processTarget() {
       ? `${parsed.resolution} NATIVE`
       : String(parsed.resolution);
     updateModelShape();
+    updateMemoryEstimate();
     createRenderer(parsed.resolution);
     renderer.updateVoxelData(parsed.target);
     requestRender();
@@ -214,10 +217,7 @@ async function ensureTrainer() {
   if (trainer) await trainer.dispose();
 
   const config = readConfig();
-  const hiddenTapeBytes = config.coarseSize ** 3 * config.fcDim * 2 * config.stepMax;
-  if (hiddenTapeBytes > 512 * 1024 ** 2) {
-    throw new Error('These settings need too much GPU memory. Increase LPPN scale or reduce resolution, width, or rollout.');
-  }
+  validateTrainingConfig(config);
 
   trainer = new VoxelTrainer(device, config, parsedTarget.target, shaders, {
     onStep: stats => {
@@ -317,6 +317,165 @@ function readConfig() {
   };
 }
 
+function estimateTrainingResources(config) {
+  const scalarBytes = Uint16Array.BYTES_PER_ELEMENT;
+  const alignBufferBytes = bytes => Math.max(8, Math.ceil(bytes / 8) * 8);
+  const f16BufferBytes = count => alignBufferBytes(count * scalarBytes);
+  const f32BufferBytes = count => alignBufferBytes(count * Float32Array.BYTES_PER_ELEMENT);
+  const u32BufferBytes = count => alignBufferBytes(count * Uint32Array.BYTES_PER_ELEMENT);
+  const cells = config.coarseSize ** 3;
+  const stateElements = cells * config.channels;
+  const totalVoxels = config.targetSize ** 3;
+  const rows = Math.min(totalVoxels, 8192);
+  const inputDim = config.channels + 6;
+  const lppnWidth = 64;
+  const kernelCount = 5;
+  const rawStateBytes = stateElements * scalarBytes;
+  const stateBytes = f16BufferBytes(stateElements);
+  const stateTapeBytes = f16BufferBytes(stateElements * (config.stepMax + 1));
+  const hiddenTapeBytes = f16BufferBytes(cells * config.fcDim * config.stepMax);
+  const livingTapeBytes = f16BufferBytes(cells * config.stepMax);
+  const targetBytes = f16BufferBytes(totalVoxels * 4);
+  const sampleBytes = u32BufferBytes(totalVoxels);
+  const previewBytes = targetBytes;
+  const lppnInputBytes = f16BufferBytes(rows * inputDim);
+  const lppnHiddenBytes = f16BufferBytes(rows * lppnWidth);
+  const dNcaHiddenBytes = f16BufferBytes(cells * config.fcDim);
+  const dPerceptionBytes = f16BufferBytes(cells * config.channels * kernelCount);
+  const poolStateBytes = Math.max(4, Math.ceil(rawStateBytes / 4) * 4);
+  const poolSize = Math.max(8, Math.min(64, Math.floor((64 * 1024 ** 2) / rawStateBytes)));
+  const poolBytes = alignBufferBytes(poolSize * poolStateBytes);
+
+  const parameterCounts = [
+    config.channels * kernelCount * config.fcDim,
+    config.fcDim,
+    config.fcDim * config.channels,
+    inputDim * lppnWidth,
+    lppnWidth,
+    lppnWidth ** 2,
+    lppnWidth,
+    lppnWidth ** 2,
+    lppnWidth,
+    lppnWidth * 4,
+    4,
+  ];
+  const largestParameterBytes = f32BufferBytes(Math.max(...parameterCounts));
+  const previewChunks = Math.ceil(totalVoxels / rows);
+  const parameterArenaBytes = (config.stepMax * 10 + previewChunks * 6 + 66) * 256;
+  const poolRecoveryBytes = alignBufferBytes(4);
+
+  const storageBuffers = {
+    'state history': stateTapeBytes,
+    'hidden history': hiddenTapeBytes,
+    'living-mask history': livingTapeBytes,
+    target: targetBytes,
+    'sample indices': sampleBytes,
+    preview: previewBytes,
+    'LPPN input': lppnInputBytes,
+    'LPPN hidden activation': lppnHiddenBytes,
+    'NCA hidden gradient': dNcaHiddenBytes,
+    'NCA perception gradient': dPerceptionBytes,
+    'optimizer master/moment': largestParameterBytes,
+  };
+
+  const parameterBytes = parameterCounts.reduce(
+    (total, count) => total + f16BufferBytes(count) * 2 + f32BufferBytes(count) * 3,
+    0,
+  );
+  const lppnWorkspaceBytes = lppnInputBytes * 2
+    + lppnHiddenBytes * 9
+    + f16BufferBytes(rows * 4) * 2
+    + f16BufferBytes(rows) * 2
+    + alignBufferBytes(4) + alignBufferBytes(8);
+  const ncaWorkspaceBytes = stateBytes * 6 + dNcaHiddenBytes + dPerceptionBytes;
+  const kernelBytes = f16BufferBytes(kernelCount * 27);
+  const dummyBytes = alignBufferBytes(4) * 8;
+  const trainerGpuBytes = stateTapeBytes + hiddenTapeBytes + livingTapeBytes
+    + targetBytes + sampleBytes + previewBytes + poolBytes + poolRecoveryBytes + kernelBytes + dummyBytes
+    + lppnWorkspaceBytes + ncaWorkspaceBytes + parameterBytes + parameterArenaBytes;
+
+  const rendererVoxelBytes = targetBytes;
+  const rendererInstanceBytes = f16BufferBytes(totalVoxels * 8);
+  const rendererAuxiliaryBytes = alignBufferBytes(36 * 6 * Float32Array.BYTES_PER_ELEMENT)
+    + alignBufferBytes(4) * 2 + alignBufferBytes(16) + alignBufferBytes(128) + alignBufferBytes(16);
+  const rendererDepthBytes = Math.max(1, ui.canvas?.width ?? 1) * Math.max(1, ui.canvas?.height ?? 1) * 4;
+  const rendererGpuBytes = rendererVoxelBytes + rendererInstanceBytes + rendererAuxiliaryBytes + rendererDepthBytes;
+  const estimatedGpuBytes = trainerGpuBytes + rendererGpuBytes;
+
+  storageBuffers['renderer voxels'] = rendererVoxelBytes;
+  storageBuffers['renderer instances'] = rendererInstanceBytes;
+  const [largestStorageName, largestStorageBytes] = Object.entries(storageBuffers)
+    .reduce((largest, entry) => entry[1] > largest[1] ? entry : largest);
+  const largestCreatedBytes = Math.max(
+    largestStorageBytes,
+    poolBytes,
+    parameterArenaBytes,
+    rendererVoxelBytes,
+    rendererInstanceBytes,
+  );
+  const largestWorkItems = Math.max(
+    cells * config.fcDim,
+    cells * config.channels * kernelCount,
+    stateElements,
+    rows * Math.max(inputDim, lppnWidth),
+    ...parameterCounts,
+  );
+
+  return {
+    estimatedGpuBytes,
+    recommendedGpuBytes: Math.ceil(estimatedGpuBytes * 1.25),
+    rendererGpuBytes,
+    trainerGpuBytes,
+    largestCreatedBytes,
+    largestStorageBytes,
+    largestStorageName,
+    largestWorkItems,
+  };
+}
+
+function validateTrainingConfig(config) {
+  const resources = estimateTrainingResources(config);
+  const {
+    estimatedGpuBytes,
+    largestCreatedBytes,
+    largestStorageBytes,
+    largestStorageName,
+    largestWorkItems,
+  } = resources;
+  if (largestStorageBytes > device.limits.maxStorageBufferBindingSize) {
+    throw new Error(
+      'The ' + largestStorageName + ' buffer needs ' + formatMiB(largestStorageBytes) + ', '
+      + "above this device's " + formatMiB(device.limits.maxStorageBufferBindingSize)
+      + ' storage-buffer limit. Increase LPPN scale or reduce resolution, width, or rollout.',
+    );
+  }
+
+  if (largestCreatedBytes > device.limits.maxBufferSize) {
+    throw new Error(
+      'These settings require a ' + formatMiB(largestCreatedBytes) + ' GPU buffer, '
+      + "above this device's " + formatMiB(device.limits.maxBufferSize) + ' buffer limit.'
+    );
+  }
+
+  const dispatchCapacity = device.limits.maxComputeWorkgroupsPerDimension * 64;
+  if (largestWorkItems > dispatchCapacity) {
+    throw new Error(
+      'These settings exceed the WebGPU dispatch limit. Increase LPPN scale or reduce resolution, channels, or width.',
+    );
+  }
+
+  if (estimatedGpuBytes > 768 * 1024 ** 2) {
+    throw new Error(
+      'These mixed-precision settings need about ' + formatMiB(estimatedGpuBytes) + ' of GPU memory. '
+      + 'Increase LPPN scale or reduce resolution, width, channels, or rollout.',
+    );
+  }
+}
+
+function formatMiB(bytes) {
+  return `${(bytes / 1024 ** 2).toFixed(0)} MiB`;
+}
+
 async function invalidateTrainer() {
   trainerDirty = true;
   if (trainer) {
@@ -325,6 +484,7 @@ async function invalidateTrainer() {
   }
   resetStats();
   updateModelShape();
+  updateMemoryEstimate();
   setTrainingControls(false);
 }
 
@@ -335,6 +495,7 @@ async function clearTarget() {
   renderer = null;
   ui.targetName.textContent = 'NO TARGET';
   ui.modelShape.textContent = '-';
+  updateMemoryEstimate();
   setTrainingControls(false);
   requestRender();
 }
@@ -343,6 +504,25 @@ function updateModelShape() {
   if (!parsedTarget) return;
   const scale = Number(ui.cfgScale.value);
   ui.modelShape.textContent = `${parsedTarget.resolution / scale} CUBED TO ${parsedTarget.resolution} CUBED`;
+}
+
+function updateMemoryEstimate() {
+  if (!parsedTarget) {
+    ui.statMemory.textContent = '-';
+    ui.statMemory.removeAttribute('title');
+    return;
+  }
+  try {
+    const resources = estimateTrainingResources(readConfig());
+    ui.statMemory.textContent = formatMiB(resources.estimatedGpuBytes);
+    ui.statMemory.title = formatMiB(resources.trainerGpuBytes) + ' training buffers + '
+      + formatMiB(resources.rendererGpuBytes) + ' preview/render buffers. '
+      + 'Plan for ' + formatMiB(resources.recommendedGpuBytes) + ' with 25% headroom; '
+      + 'browser and GPU-driver overhead are additional.';
+  } catch (error) {
+    ui.statMemory.textContent = 'CHECK CFG';
+    ui.statMemory.title = error.message;
+  }
 }
 
 function setTrainingControls(running) {
@@ -396,7 +576,7 @@ function drawLossChart() {
   context.scale(dpr, dpr);
   const cssWidth = width / dpr;
   const cssHeight = height / dpr;
-  context.strokeStyle = 'rgba(91, 125, 135, 0.18)';
+  context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart-grid').trim();
   context.lineWidth = 1;
   for (let row = 1; row < 4; row++) {
     const y = row * cssHeight / 4;
@@ -417,7 +597,7 @@ function drawLossChart() {
   const low = Math.log10(min);
   const high = Math.log10(Math.max(max, min * 1.01));
   const span = Math.max(0.001, high - low);
-  context.strokeStyle = '#2d7377';
+  context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--teal').trim();
   context.lineWidth = 2;
   context.beginPath();
   values.forEach((value, index) => {
@@ -442,6 +622,7 @@ function resizeCanvas() {
     ui.canvas.width = width;
     ui.canvas.height = height;
     renderer?.resize(width, height);
+    updateMemoryEstimate();
     requestRender();
   }
 }
@@ -468,10 +649,11 @@ async function loadShaders() {
     loss: 'loss_f16.wgsl',
     ncaBackward: 'nca_backward_f16.wgsl',
     optimizer: 'optimizer_f16.wgsl',
+    poolRecovery: 'pool_recovery_f16.wgsl',
   };
   const entries = await Promise.all(Object.entries(files).map(async ([key, file]) => [
     key,
-    await fetch('./shaders/' + file + '?v=14').then(response => {
+    await fetch('./shaders/' + file + '?v=20').then(response => {
       if (!response.ok) throw new Error('Could not load shader ' + file + '.');
       return response.text();
     }),

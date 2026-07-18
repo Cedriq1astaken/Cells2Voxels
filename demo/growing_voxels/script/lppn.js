@@ -1,10 +1,11 @@
 import { createBuffer, createEmptyBuffer } from './gpu.js';
 
 export class LPPNCompute {
-  constructor(device, model, shaderTemplate, hasF16) {
+  constructor(device, model, shaderTemplate, livingMaskTemplate, hasF16) {
     this.device = device;
     this.model = model;
     this.shaderTemplate = shaderTemplate;
+    this.livingMaskTemplate = livingMaskTemplate;
     this.hasF16 = hasF16;
     this._buildPipeline();
   }
@@ -18,6 +19,11 @@ export class LPPNCompute {
     // Output RGBA buffer: [4 * renderSize^3]
     const outSize = 4 * renderSize * renderSize * renderSize * 4;
     this.outputBuf = createEmptyBuffer(device, outSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+    this.fineAlphaBuf = createEmptyBuffer(
+      device,
+      renderSize * renderSize * renderSize * Float32Array.BYTES_PER_ELEMENT,
+      GPUBufferUsage.STORAGE,
+    );
 
     // Voxel count buffer (atomic counter for active voxels)
     this.countBuf = createEmptyBuffer(device, 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
@@ -49,16 +55,35 @@ export class LPPNCompute {
       .replace(/{{STATE_TYPE}}/g, stateType)
       .replace(/{{F16_ENABLE}}/g, f16Enable);
     const shaderModule = device.createShaderModule({ code: shaderCode });
+    const livingMaskCode = this.livingMaskTemplate
+      .replace(/{{S}}/g, S)
+      .replace(/{{RS}}/g, this.renderSize)
+      .replace(/{{LC}}/g, this.model.livingChannel)
+      .replace(/{{STATE_TYPE}}/g, stateType)
+      .replace(/{{F16_ENABLE}}/g, f16Enable);
+    const livingMaskModule = device.createShaderModule({ code: livingMaskCode });
+    this.livingMaskBindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.livingMaskPipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.livingMaskBindGroupLayout] }),
+      compute: { module: livingMaskModule, entryPoint: 'interpolate_living_alpha' },
+    });
 
-    // Bind group layout: state_in, output, count, uniforms, then LPPN weights
+    // Bind group layout: state, output, count, uniforms, fine alpha, then LPPN weights
     const entries = [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // state
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // output
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // count
       { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },           // uniforms
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // fine alpha
     ];
-    // LPPN weight buffers: 8 total (4 layers × weight + bias)
-    let bindIdx = 4;
+    // LPPN weight buffers: 8 total (4 layers x weight + bias)
+    let bindIdx = 5;
     
     const lppnKeys = Object.keys(model.weights.lppn).sort((a, b) => {
       // First sort by layer number (extracted from e.g. "net.0...")
@@ -91,8 +116,9 @@ export class LPPNCompute {
       { binding: 1, resource: { buffer: this.outputBuf } },
       { binding: 2, resource: { buffer: this.countBuf } },
       { binding: 3, resource: { buffer: this.uniformBuf } },
+      { binding: 4, resource: { buffer: this.fineAlphaBuf } },
     ];
-    let bindIdx = 4;
+    let bindIdx = 5;
     for (const key of this.lppnKeyOrder) {
       entries.push({ binding: bindIdx++, resource: { buffer: this.lppnBuffers[key] } });
     }
@@ -118,11 +144,25 @@ export class LPPNCompute {
     u[9] = crossSection?.[2] ?? RS;
     this.device.queue.writeBuffer(this.uniformBuf, 0, u);
 
+    const maskBindGroup = this.device.createBindGroup({
+      layout: this.livingMaskBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: stateBuffer } },
+        { binding: 1, resource: { buffer: this.fineAlphaBuf } },
+        { binding: 2, resource: { buffer: this.uniformBuf } },
+      ],
+    });
+    const maskPass = encoder.beginComputePass();
+    maskPass.setPipeline(this.livingMaskPipeline);
+    maskPass.setBindGroup(0, maskBindGroup);
+    const wg = Math.ceil(RS / 4);
+    maskPass.dispatchWorkgroups(wg, wg, wg);
+    maskPass.end();
+
     const bg = this.createBindGroup(stateBuffer);
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, bg);
-    const wg = Math.ceil(RS / 4);
     pass.dispatchWorkgroups(wg, wg, wg);
     pass.end();
   }
