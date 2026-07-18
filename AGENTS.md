@@ -40,6 +40,7 @@ This file stores durable context for future agent work. Update it when project s
 - Read a demo's app orchestration, GPU wrapper, shaders, loader/exporter, renderer, and UI together before changing behavior.
 - Keep the three demos conceptually separate while preserving compatible model formats where appropriate.
 - `growing_voxels` and `train_growing_voxels` intentionally share the same named UI palette tokens; mirror shared visual-color changes in both `style.css` files while keeping each layout local.
+- Deferred trainer-performance roadmap: preserve the NCA/LPPN architecture and model format, first bound GPU work in flight and separate/throttle previews, then optimize perception reuse and tiled gradient reductions. Validate fixed-seed small targets against the existing path before replacing it.
 - Preserve unrelated user changes and generated/model assets.
 - Do not edit notebooks mechanically unless the task specifically involves them.
 - Validate changes with the narrowest relevant check first and report checks that could not be run.
