@@ -12,7 +12,6 @@ const PI: f32 = 3.141592653589793;
 
 @group(0) @binding(0) var<storage, read> state: array<{{STATE_TYPE}}>;      // [C, S, S, S]
 @group(0) @binding(1) var<storage, read_write> output: array<f32>; // [4, RS, RS, RS]
-@group(0) @binding(2) var<storage, read_write> count: array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> params: array<vec4<f32>, 3>;
 
 @group(0) @binding(4) var<storage, read> fine_alpha: array<f32>; // [RS, RS, RS]
@@ -192,7 +191,4 @@ fn lppn_decode(@builtin(global_invocation_id) gid: vec3<u32>) {
   output[out_idx(2u, fz, fy, fx)] = rgba[2];
   output[out_idx(3u, fz, fy, fx)] = rgba[3];
 
-  if (rgba[3] > {{LIVING_THRESHOLD}}) {
-    atomicAdd(&count[0], 1u);
-  }
 }

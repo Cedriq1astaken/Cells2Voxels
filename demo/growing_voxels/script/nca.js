@@ -16,11 +16,13 @@ function float32ToFloat16(val) {
 }
 
 export class NCACompute {
-  constructor(device, model, shaderTemplate, hasF16) {
+  constructor(device, model, shaderTemplate, damageShaderTemplate, hasF16) {
     this.device = device;
     this.model = model;
     this.shaderTemplate = shaderTemplate;
+    this.damageShaderTemplate = damageShaderTemplate;
     this.hasF16 = hasF16;
+    this.destroyed = false;
     this.step = 0;
     this._buildPipeline();
   }
@@ -63,8 +65,11 @@ export class NCACompute {
     // Uniforms: [S, C, K, FC, seed, step, updateProb padding]
     this.uniformBuf = createEmptyBuffer(device, 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
 
-    // Random seed buffer for stochastic updates
+    // Reuse CPU upload arrays to avoid per-step allocation and garbage collection.
     this.randomBuf = createEmptyBuffer(device, S * S * S * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    this.uniformData = new Float32Array(8);
+    this.randomData = new Float32Array(S * S * S);
+    this.damageUniformData = new Float32Array(4);
 
     // Build shader with f16 support
     const stateType = hasF16 ? 'f16' : 'f32';
@@ -108,7 +113,40 @@ export class NCACompute {
 
     this.bindGroupLayout = bindGroupLayout;
     this._createBindGroups();
+    this._buildDamagePipeline();
     this.initSeed();
+  }
+
+  _buildDamagePipeline() {
+    const { device, hasF16 } = this;
+    const stateType = hasF16 ? 'f16' : 'f32';
+    const f16Enable = hasF16 ? 'enable f16;' : '';
+    const shaderCode = this.damageShaderTemplate
+      .replace(/{{S}}/g, this.model.coarseSize)
+      .replace(/{{C}}/g, this.model.channels)
+      .replace(/{{STATE_TYPE}}/g, stateType)
+      .replace(/{{F16_ENABLE}}/g, f16Enable);
+    const shaderModule = device.createShaderModule({ code: shaderCode });
+    this.damageUniformBuf = createEmptyBuffer(device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.damageBindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.damagePipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.damageBindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'clear_damage' },
+    });
+    this.damageBindGroup = device.createBindGroup({
+      layout: this.damageBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.stateA } },
+        { binding: 1, resource: { buffer: this.stateB } },
+        { binding: 2, resource: { buffer: this.damageUniformBuf } },
+      ],
+    });
   }
 
   _createBindGroups() {
@@ -175,14 +213,13 @@ export class NCACompute {
   encode(encoder) {
     const S = this.model.coarseSize;
     // Write uniforms
-    const udata = new Float32Array(8);
+    const udata = this.uniformData;
     udata[0] = S; udata[1] = this.model.channels;
     udata[2] = this.model.numKernels; udata[3] = this.model.fcDim;
     udata[4] = this.step; udata[5] = 0.5; // update prob
     this.device.queue.writeBuffer(this.uniformBuf, 0, udata);
 
-    // Write random values
-    const rng = new Float32Array(S * S * S);
+    const rng = this.randomData;
     for (let i = 0; i < rng.length; i++) rng[i] = Math.random();
     this.device.queue.writeBuffer(this.randomBuf, 0, rng);
 
@@ -209,35 +246,59 @@ export class NCACompute {
   }
 
   damageAt(x, y, z, radius) {
-    const { channels: C, coarseSize: S } = this.model;
-    const r = Math.ceil(radius);
-    const zero = new Uint32Array([0]);
-    const targets = [this.stateA, this.stateB];
+    const { coarseSize: S } = this.model;
+    const cx = Math.round(x);
+    const cy = Math.round(y);
+    const cz = Math.round(z);
+    const r = Math.max(0, radius);
+
+    // Clear full cell-state vectors in a GPU pass. This avoids thousands of
+    // scalar queue writes and preserves adjacent f16 cells exactly.
+    const damageUniform = this.damageUniformData;
+    damageUniform[0] = cx;
+    damageUniform[1] = cy;
+    damageUniform[2] = cz;
+    damageUniform[3] = r;
+    this.device.queue.writeBuffer(this.damageUniformBuf, 0, damageUniform);
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.damagePipeline);
+    pass.setBindGroup(0, this.damageBindGroup);
+    const wg = Math.ceil(S / 4);
+    pass.dispatchWorkgroups(wg, wg, wg);
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
 
     let cleared = 0;
-    for (let dz = -r; dz <= r; dz++) {
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (dx * dx + dy * dy + dz * dz > radius * radius) continue;
-          const vx = Math.round(x) + dx;
-          const vy = Math.round(y) + dy;
-          const vz = Math.round(z) + dz;
-          if (vx < 0 || vy < 0 || vz < 0 || vx >= S || vy >= S || vz >= S) continue;
-          cleared++;
-          for (let c = 0; c < C; c++) {
-            const offset = (c * S * S * S + vz * S * S + vy * S + vx) * this.bpe;
-            // WebGPU writeBuffer requires 4-byte alignment. If bpe is 2 (F16), offset might be 
-            // a multiple of 2. We align to 4 bytes and write a 4-byte zero (which clears 2 F16 voxels).
-            // For a damage brush, clearing a neighboring voxel is perfectly fine visually.
-            const alignedOffset = offset & ~3;
-            for (const target of targets) {
-              this.device.queue.writeBuffer(target, alignedOffset, zero, 0, 1);
-            }
-          }
+    const ceilRadius = Math.ceil(r);
+    for (let dz = -ceilRadius; dz <= ceilRadius; dz++) {
+      for (let dy = -ceilRadius; dy <= ceilRadius; dy++) {
+        for (let dx = -ceilRadius; dx <= ceilRadius; dx++) {
+          if (dx * dx + dy * dy + dz * dz > r * r) continue;
+          const vx = cx + dx;
+          const vy = cy + dy;
+          const vz = cz + dz;
+          if (vx >= 0 && vy >= 0 && vz >= 0 && vx < S && vy < S && vz < S) cleared++;
         }
       }
     }
-    console.log(`Damage applied at (${Math.round(x)}, ${Math.round(y)}, ${Math.round(z)}), cleared ${cleared} cells`);
-    this.step++; // Increment step to invalidate rendering cache
+    console.log(`Damage applied at (${cx}, ${cy}, ${cz}), cleared ${cleared} cells`);
+    this.step++; // Invalidate the decoded view; no NCA evolution was performed.
+    return cleared;
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.stateA?.destroy();
+    this.stateB?.destroy();
+    this.updatedState?.destroy();
+    this.percWeights?.destroy();
+    this.adaptW1?.destroy();
+    this.adaptB1?.destroy();
+    this.adaptW2?.destroy();
+    this.uniformBuf?.destroy();
+    this.randomBuf?.destroy();
+    this.damageUniformBuf?.destroy();
   }
 }

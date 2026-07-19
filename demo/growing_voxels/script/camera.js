@@ -2,16 +2,17 @@ export class OrbitCamera {
   constructor() {
     this.azimuth = 35;
     this.elevation = 22;
-    this.distance = 1.35;
+    this.distance = 2.6;
     this.target = [0, 0, 0];
     this.fov = 50;
     this.near = 0.01;
     this.far = 100;
     this._dragging = false;
     this._pointerId = null;
+    this._startX = 0;
+    this._startY = 0;
     this._lastX = 0;
     this._lastY = 0;
-    this._dragDistance = 0;
     this._suppressClick = false;
   }
 
@@ -19,25 +20,38 @@ export class OrbitCamera {
     canvas.style.touchAction = 'none';
 
     canvas.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || this._dragging) return;
+      if (event.button !== 0 || this._pointerId !== null) return;
       event.preventDefault();
-      this._dragging = true;
+      this._dragging = false;
       this._pointerId = event.pointerId;
+      this._startX = event.clientX;
+      this._startY = event.clientY;
       this._lastX = event.clientX;
       this._lastY = event.clientY;
-      this._dragDistance = 0;
       this._suppressClick = false;
       canvas.setPointerCapture(event.pointerId);
     });
 
     canvas.addEventListener('pointermove', (event) => {
-      if (!this._dragging || event.pointerId !== this._pointerId) return;
+      if (event.pointerId !== this._pointerId) return;
       event.preventDefault();
+
+      // Treat small hand jitter as a click. The old path-length threshold
+      // classified a 3px move out and back as a drag, silently blocking damage.
+      if (!this._dragging) {
+        const displacement = Math.hypot(event.clientX - this._startX, event.clientY - this._startY);
+        if (displacement <= 6) return;
+        this._dragging = true;
+        this._suppressClick = true;
+        this._lastX = event.clientX;
+        this._lastY = event.clientY;
+        return;
+      }
+
       const dx = event.clientX - this._lastX;
       const dy = event.clientY - this._lastY;
       this._lastX = event.clientX;
       this._lastY = event.clientY;
-      this._dragDistance += Math.hypot(dx, dy);
 
       const sensitivity = 0.35;
       this.azimuth -= dx * sensitivity;
@@ -45,8 +59,8 @@ export class OrbitCamera {
     });
 
     const endDrag = (event) => {
-      if (this._pointerId !== null && event.pointerId !== this._pointerId) return;
-      this._suppressClick = this._dragDistance > 4;
+      if (this._pointerId === null || event.pointerId !== this._pointerId) return;
+      this._suppressClick = event.type === 'pointerup' && this._dragging;
       this._dragging = false;
       this._pointerId = null;
       if (canvas.hasPointerCapture(event.pointerId)) {
@@ -148,6 +162,6 @@ function mat4Multiply(a, b) {
 function add3(a, b, c) { return [a[0] + b[0] + c[0], a[1] + b[1] + c[1], a[2] + b[2] + c[2]]; }
 function scale3(v, s) { return [v[0] * s, v[1] * s, v[2] * s]; }
 function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
-function cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
-function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
-function normalize(v) { const l = Math.sqrt(dot(v, v)); return l > 0 ? [v[0]/l, v[1]/l, v[2]/l] : [0,0,1]; }
+function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function normalize(v) { const l = Math.sqrt(dot(v, v)); return l > 0 ? [v[0] / l, v[1] / l, v[2] / l] : [0, 0, 1]; }

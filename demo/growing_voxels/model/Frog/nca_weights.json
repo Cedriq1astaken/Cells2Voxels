@@ -10,7 +10,7 @@
     "iterations": 4000,
     "max_occupancy": 0.1,
     "gpu_used": "NVIDIA A100-SXM4-40GB",
-    "target_path": "Boston Tea Pot.npy",
+    "target_path": "frog.npy",
     "ram_used_gb": 4.57
   },
   "perception": {

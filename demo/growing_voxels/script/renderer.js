@@ -22,6 +22,9 @@ const CUBE_VERTS = new Float32Array([
   1,0,0, 1,0,0,  1,1,0, 1,0,0,  1,1,1, 1,0,0,
 ]);
 
+const INSTANCE_BYTES = 8; // packed linear voxel index + packed RGBA8
+const COUNT_READ_INTERVAL_HINT_MS = 250;
+
 export class VoxelRenderer {
   constructor(device, format, renderSize, compactShaderCode, renderShaderCode, livingThreshold = 0.1, maxOccupancy = 0.3, rotateModel = true) {
     this.device = device;
@@ -34,29 +37,35 @@ export class VoxelRenderer {
     this.rotateModel = rotateModel;
     this.modelRotation = [0, 0, 0];
     this.voxelCount = 0;
+    this.destroyed = false;
+    this.countReadIntervalHintMs = COUNT_READ_INTERVAL_HINT_MS;
     this._build();
   }
 
   _build() {
     const { device, renderSize: RS } = this;
-    const totalVoxels = RS * RS * RS;
-    this.maxInstances = totalVoxels;
+    this.totalVoxels = RS * RS * RS;
+    const declaredOccupancy = Number.isFinite(this.maxOccupancy) ? this.maxOccupancy : 0.3;
+    const initialFraction = Math.min(1, Math.max(0.1, declaredOccupancy * 2));
+    const initialCapacity = Math.min(
+      this.totalVoxels,
+      Math.max(1024, Math.ceil(this.totalVoxels * initialFraction)),
+    );
 
     this.vertexBuf = createBuffer(device, CUBE_VERTS, GPUBufferUsage.VERTEX);
-    this.instanceBuf = createEmptyBuffer(device, this.maxInstances * 7 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX);
-    this.countBuf = createEmptyBuffer(device, 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
-    this.countReadBuf = createEmptyBuffer(device, 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
-    // Indirect draw args: [vertexCount=36, instanceCount, firstVertex=0, firstInstance=0]
+    // count[0] = total visible voxels, count[1] = instances written safely.
+    this.countBuf = createEmptyBuffer(device, 8, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     this.indirectBuf = createBuffer(device, new Uint32Array([36, 0, 0, 0]), GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.uniformBuf = createEmptyBuffer(device, 128, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.compactParams = createEmptyBuffer(device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.countResetData = new Uint32Array(2);
+    this.compactParamsData = new ArrayBuffer(16);
+    this.compactParamsU32 = new Uint32Array(this.compactParamsData);
+    this.compactParamsF32 = new Float32Array(this.compactParamsData);
+    this.renderUniformData = new Float32Array(32);
 
-    // Compact pipeline
-    const compactParams = createEmptyBuffer(device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.compactParams = compactParams;
-
-    let code = this.compactShaderCode;
-    const compactModule = device.createShaderModule({ code });
-    const compactBGL = device.createBindGroupLayout({
+    const compactModule = device.createShaderModule({ code: this.compactShaderCode });
+    this.compactBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -65,23 +74,22 @@ export class VoxelRenderer {
       ],
     });
     this.compactPipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [compactBGL] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.compactBGL] }),
       compute: { module: compactModule, entryPoint: 'compact' },
     });
-    this.compactBGL = compactBGL;
 
-    // Render pipeline
     const renderModule = device.createShaderModule({ code: this.renderShaderCode });
-    const renderBGL = device.createBindGroupLayout({
+    this.renderBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.renderPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [renderBGL] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.renderBGL] }),
       vertex: {
-        module: renderModule, entryPoint: 'vs_main',
+        module: renderModule,
+        entryPoint: 'vs_main',
         buffers: [{
           arrayStride: 24,
           attributes: [
@@ -91,13 +99,14 @@ export class VoxelRenderer {
         }],
       },
       fragment: {
-        module: renderModule, entryPoint: 'fs_main',
+        module: renderModule,
+        entryPoint: 'fs_main',
         targets: [{
           format: this.format,
           blend: {
             color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
-          }
+            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          },
         }],
       },
       depthStencil: {
@@ -105,74 +114,106 @@ export class VoxelRenderer {
         depthWriteEnabled: true,
         depthCompare: 'less',
       },
-      primitive: {
-        topology: 'triangle-list',
-        cullMode: 'back',
-      },
+      primitive: { topology: 'triangle-list', cullMode: 'back' },
     });
-    this.renderBGL = renderBGL;
-    this.renderBG = device.createBindGroup({
-      layout: renderBGL,
+
+    this._replaceInstanceBuffer(initialCapacity);
+  }
+
+  _replaceInstanceBuffer(capacity) {
+    const oldBuffer = this.instanceBuf;
+    this.maxInstances = Math.max(1, Math.min(this.totalVoxels, Math.ceil(capacity)));
+    this.instanceBuf = createEmptyBuffer(
+      this.device,
+      this.maxInstances * INSTANCE_BYTES,
+      GPUBufferUsage.STORAGE,
+    );
+    this.renderBG = this.device.createBindGroup({
+      layout: this.renderBGL,
       entries: [
         { binding: 0, resource: { buffer: this.uniformBuf } },
         { binding: 1, resource: { buffer: this.instanceBuf } },
       ],
     });
+    this.compactBG = null;
+    this.compactVoxelBuffer = null;
+    oldBuffer?.destroy();
+  }
+
+  ensureInstanceCapacity(requiredCount) {
+    const required = Math.min(this.totalVoxels, Math.max(0, Math.ceil(requiredCount)));
+    if (required <= this.maxInstances) return false;
+    const nextCapacity = Math.min(
+      this.totalVoxels,
+      Math.max(
+        Math.ceil(this.maxInstances * 1.5),
+        Math.ceil(required * 1.25),
+      ),
+    );
+    console.info(`Growing packed voxel instance capacity: ${this.maxInstances} -> ${nextCapacity}`);
+    this._replaceInstanceBuffer(nextCapacity);
+    return true;
   }
 
   createDepthTexture(width, height) {
     this.depthTexture?.destroy();
     this.depthTexture = this.device.createTexture({
-      size: [width, height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      size: [width, height],
+      format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
     return this.depthTexture;
   }
 
   encodeCompact(encoder, voxelBuffer) {
     const RS = this.renderSize;
-    this.device.queue.writeBuffer(this.countBuf, 0, new Uint32Array([0]));
-    
-    const paramsData = new ArrayBuffer(16);
-    const paramsU32 = new Uint32Array(paramsData);
-    const paramsF32 = new Float32Array(paramsData);
-    paramsU32[0] = RS;
-    paramsU32[1] = this.maxInstances;
-    paramsF32[2] = this.livingThreshold;
-    paramsU32[3] = 0;
-    this.device.queue.writeBuffer(this.compactParams, 0, paramsData);
+    this.device.queue.writeBuffer(this.countBuf, 0, this.countResetData);
 
-    const bg = this.device.createBindGroup({
-      layout: this.compactBGL,
-      entries: [
-        { binding: 0, resource: { buffer: voxelBuffer } },
-        { binding: 1, resource: { buffer: this.instanceBuf } },
-        { binding: 2, resource: { buffer: this.countBuf } },
-        { binding: 3, resource: { buffer: this.compactParams } },
-      ],
-    });
+    this.compactParamsU32[0] = RS;
+    this.compactParamsU32[1] = this.maxInstances;
+    this.compactParamsF32[2] = this.livingThreshold;
+    this.compactParamsU32[3] = 0;
+    this.device.queue.writeBuffer(this.compactParams, 0, this.compactParamsData);
+
+    if (!this.compactBG || this.compactVoxelBuffer !== voxelBuffer) {
+      this.compactVoxelBuffer = voxelBuffer;
+      this.compactBG = this.device.createBindGroup({
+        layout: this.compactBGL,
+        entries: [
+          { binding: 0, resource: { buffer: voxelBuffer } },
+          { binding: 1, resource: { buffer: this.instanceBuf } },
+          { binding: 2, resource: { buffer: this.countBuf } },
+          { binding: 3, resource: { buffer: this.compactParams } },
+        ],
+      });
+    }
 
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.compactPipeline);
-    pass.setBindGroup(0, bg);
+    pass.setBindGroup(0, this.compactBG);
     const wg = Math.ceil(RS / 4);
     pass.dispatchWorkgroups(wg, wg, wg);
     pass.end();
 
-    // Copy instance count into the indirect draw args buffer (offset 4 = instanceCount slot)
-    encoder.copyBufferToBuffer(this.countBuf, 0, this.indirectBuf, 4, 4);
+    // count[1] is clamped by construction, so indirect drawing cannot read
+    // beyond the dynamically sized packed instance buffer.
+    encoder.copyBufferToBuffer(this.countBuf, 4, this.indirectBuf, 4, 4);
   }
 
   encodeRender(encoder, textureView, depthView, mvp, camPos, lightDir) {
     const RS = this.renderSize;
-    const u = new ArrayBuffer(128);
-    const f = new Float32Array(u);
-    f.set(mvp, 0);      // mat4 at offset 0
-    f[16] = camPos[0]; f[17] = camPos[1]; f[18] = camPos[2];
+    const f = this.renderUniformData;
+    f.fill(0);
+    f.set(mvp, 0);
+    f[16] = camPos[0];
+    f[17] = camPos[1];
+    f[18] = camPos[2];
     f[19] = RS;
-    f[20] = lightDir[0]; f[21] = lightDir[1]; f[22] = lightDir[2];
+    f[20] = lightDir[0];
+    f[21] = lightDir[1];
+    f[22] = lightDir[2];
     f[23] = 1.0 / RS;
     f[24] = this.rotateModel ? 1.0 : 0.0;
-    // vec3 alignment places model_rotation at byte 112 (float index 28).
     f[28] = this.modelRotation[0];
     f[29] = this.modelRotation[1];
     f[30] = this.modelRotation[2];
@@ -180,10 +221,16 @@ export class VoxelRenderer {
 
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
-        view: textureView, clearValue: { r: 0.12549, g: 0.16471, b: 0.20784, a: 1.0 }, loadOp: 'clear', storeOp: 'store',
+        view: textureView,
+        clearValue: { r: 0.12549, g: 0.16471, b: 0.20784, a: 1.0 },
+        loadOp: 'clear',
+        storeOp: 'store',
       }],
       depthStencilAttachment: {
-        view: depthView, depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'store',
+        view: depthView,
+        depthClearValue: 1.0,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
       },
     });
     pass.setPipeline(this.renderPipeline);
@@ -194,15 +241,37 @@ export class VoxelRenderer {
   }
 
   async readVoxelCount() {
-    const { device, countBuf, countReadBuf } = this;
-    const encoder = device.createCommandEncoder();
-    encoder.copyBufferToBuffer(countBuf, 0, countReadBuf, 0, 4);
-    device.queue.submit([encoder.finish()]);
-    await countReadBuf.mapAsync(GPUMapMode.READ);
-    const data = new Uint32Array(countReadBuf.getMappedRange());
-    const count = data[0];
-    countReadBuf.unmap();
-    this.voxelCount = count;
-    return count;
+    if (this.destroyed) return 0;
+    const readBuf = createEmptyBuffer(
+      this.device,
+      4,
+      GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    );
+    try {
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyBufferToBuffer(this.countBuf, 0, readBuf, 0, 4);
+      this.device.queue.submit([encoder.finish()]);
+      await readBuf.mapAsync(GPUMapMode.READ);
+      const count = new Uint32Array(readBuf.getMappedRange())[0];
+      readBuf.unmap();
+      this.voxelCount = count;
+      return count;
+    } finally {
+      readBuf.destroy();
+    }
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.depthTexture?.destroy();
+    this.vertexBuf?.destroy();
+    this.instanceBuf?.destroy();
+    this.countBuf?.destroy();
+    this.indirectBuf?.destroy();
+    this.uniformBuf?.destroy();
+    this.compactParams?.destroy();
+    this.compactBG = null;
+    this.renderBG = null;
   }
 }

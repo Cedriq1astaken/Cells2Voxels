@@ -7,6 +7,7 @@ export class LPPNCompute {
     this.shaderTemplate = shaderTemplate;
     this.livingMaskTemplate = livingMaskTemplate;
     this.hasF16 = hasF16;
+    this.destroyed = false;
     this._buildPipeline();
   }
 
@@ -25,8 +26,6 @@ export class LPPNCompute {
       GPUBufferUsage.STORAGE,
     );
 
-    // Voxel count buffer (atomic counter for active voxels)
-    this.countBuf = createEmptyBuffer(device, 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
 
     // Upload LPPN weights
     this.lppnBuffers = {};
@@ -34,8 +33,10 @@ export class LPPNCompute {
       this.lppnBuffers[key] = createBuffer(device, info.data, GPUBufferUsage.STORAGE);
     }
 
-    // Uniforms
+    // Uniforms and stable bind groups are reused across decodes.
     this.uniformBuf = createEmptyBuffer(device, 48, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.uniformData = new Float32Array(12);
+    this.bindGroupCache = new Map();
 
     const { numFrequencies: NF, lppnHiddenDim: HD } = model;
     const coordDim = 3 * Math.max(1, 2 * NF);
@@ -74,11 +75,11 @@ export class LPPNCompute {
       compute: { module: livingMaskModule, entryPoint: 'interpolate_living_alpha' },
     });
 
-    // Bind group layout: state, output, count, uniforms, fine alpha, then LPPN weights
+    // Binding 2 is intentionally unused: the old decoded-voxel atomic counter
+    // was never consumed and caused global contention across the full volume.
     const entries = [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // state
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // output
-      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // count
       { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },           // uniforms
       { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // fine alpha
     ];
@@ -110,28 +111,43 @@ export class LPPNCompute {
     this.bindGroupLayout = bindGroupLayout;
   }
 
-  createBindGroup(stateBuffer) {
-    const entries = [
+  _getBindGroups(stateBuffer) {
+    let groups = this.bindGroupCache.get(stateBuffer);
+    if (groups) return groups;
+
+    const decodeEntries = [
       { binding: 0, resource: { buffer: stateBuffer } },
       { binding: 1, resource: { buffer: this.outputBuf } },
-      { binding: 2, resource: { buffer: this.countBuf } },
       { binding: 3, resource: { buffer: this.uniformBuf } },
       { binding: 4, resource: { buffer: this.fineAlphaBuf } },
     ];
     let bindIdx = 5;
     for (const key of this.lppnKeyOrder) {
-      entries.push({ binding: bindIdx++, resource: { buffer: this.lppnBuffers[key] } });
+      decodeEntries.push({ binding: bindIdx++, resource: { buffer: this.lppnBuffers[key] } });
     }
-    return this.device.createBindGroup({ layout: this.bindGroupLayout, entries });
+
+    groups = {
+      mask: this.device.createBindGroup({
+        layout: this.livingMaskBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: stateBuffer } },
+          { binding: 1, resource: { buffer: this.fineAlphaBuf } },
+          { binding: 2, resource: { buffer: this.uniformBuf } },
+        ],
+      }),
+      decode: this.device.createBindGroup({
+        layout: this.bindGroupLayout,
+        entries: decodeEntries,
+      }),
+    };
+    this.bindGroupCache.set(stateBuffer, groups);
+    return groups;
   }
 
   encode(encoder, stateBuffer, crossSection) {
     const RS = this.renderSize;
-    // Reset counter
-    this.device.queue.writeBuffer(this.countBuf, 0, new Uint32Array([0]));
-
-    // Write uniforms
-    const u = new Float32Array(12);
+    const u = this.uniformData;
+    u.fill(0);
     u[0] = this.model.coarseSize;
     u[1] = this.model.channels;
     u[2] = this.model.scale;
@@ -144,26 +160,28 @@ export class LPPNCompute {
     u[9] = crossSection?.[2] ?? RS;
     this.device.queue.writeBuffer(this.uniformBuf, 0, u);
 
-    const maskBindGroup = this.device.createBindGroup({
-      layout: this.livingMaskBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: stateBuffer } },
-        { binding: 1, resource: { buffer: this.fineAlphaBuf } },
-        { binding: 2, resource: { buffer: this.uniformBuf } },
-      ],
-    });
+    const groups = this._getBindGroups(stateBuffer);
+    const wg = Math.ceil(RS / 4);
     const maskPass = encoder.beginComputePass();
     maskPass.setPipeline(this.livingMaskPipeline);
-    maskPass.setBindGroup(0, maskBindGroup);
-    const wg = Math.ceil(RS / 4);
+    maskPass.setBindGroup(0, groups.mask);
     maskPass.dispatchWorkgroups(wg, wg, wg);
     maskPass.end();
 
-    const bg = this.createBindGroup(stateBuffer);
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bg);
+    pass.setBindGroup(0, groups.decode);
     pass.dispatchWorkgroups(wg, wg, wg);
     pass.end();
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.outputBuf?.destroy();
+    this.fineAlphaBuf?.destroy();
+    this.uniformBuf?.destroy();
+    for (const buffer of Object.values(this.lppnBuffers)) buffer.destroy();
+    this.bindGroupCache.clear();
   }
 }

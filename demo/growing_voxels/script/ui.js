@@ -57,8 +57,10 @@ export class UI {
     for (const axis of ['x', 'y', 'z']) {
       const s = this.els[`sliderCross${axis.toUpperCase()}`];
       if (s) {
-        s.addEventListener('input', () => this._updateSliderValues());
-        s.addEventListener('change', () => this._fire('crossChange'));
+        s.addEventListener('input', () => {
+          this._updateSliderValues();
+          this._fire('crossChange');
+        });
       }
     }
 

@@ -22,6 +22,8 @@ This file stores durable context for future agent work. Update it when project s
 
 - The demos are browser applications built with WebGPU JavaScript and WGSL.
 - `growing_voxels` loads exported NCA/LPPN weights, evolves a coarse 3D NCA in ping-pong GPU buffers, decodes a higher-resolution RGBA volume, compacts living voxels, and renders them interactively. It supports damage and regeneration.
+  - Damage picking ray-marches the decoded RGBA alpha field on the GPU using the same alpha threshold as rendering, then clears full state vectors with a GPU brush pass. Evolution pauses while the pick readback is pending and shows one wound frame before resuming.
+  - Render instances use packed voxel-index/RGBA8 records in a dynamically growing GPU buffer. Voxel-count readback is throttled, stable bind groups are cached, and model/scale replacement explicitly destroys owned GPU buffers.
 - `growing_radiance_fields` evolves a coarse 3D NCA and uses neural radiance decoding plus ray rendering. Treat it as experimental and incomplete.
 - `train_growing_voxels` imports VOX or OBJ+VOL targets, trains a 3D NCA+LPPN in-browser using f16 WebGPU forward/backward buffers plus f32 Adam master weights and moments, previews the result, and exports a package compatible with the pretrained voxel demo.
 
