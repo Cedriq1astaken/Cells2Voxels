@@ -32,6 +32,7 @@ This file stores durable context for future agent work. Update it when project s
 - Periodic local-coordinate encoding provides continuity across cube-cell boundaries.
 - Morphogenesis training supervises rendered appearance and the living mask and uses stochastic updates, varied rollouts, and state pools for robustness.
 - The trainer's living gate is a zero-padded `3x3x3` max pool over the circularly interpolated fine alpha field. The pretrained viewer computes the same fine alpha field in a separate GPU pass before LPPN decoding.
+- In `notebook/Growing Voxel.ipynb`, sparse-target training uses separately normalized foreground/background decoded-RGBA losses, decoded-alpha Tversky, and a low-weight continuous NCA-alpha scaffold; its training-only straight-through living gate preserves the hard forward/rendered mask and exported model format.
 - Voxel and radiance-field morphogenesis in this workspace extend beyond the paper's main 2D morphology experiment.
 
 ## Working guidance
@@ -43,6 +44,7 @@ This file stores durable context for future agent work. Update it when project s
 - Deferred trainer-performance roadmap: preserve the NCA/LPPN architecture and model format, first bound GPU work in flight and separate/throttle previews, then optimize perception reuse and tiled gradient reductions. Validate fixed-seed small targets against the existing path before replacing it.
 - Preserve unrelated user changes and generated/model assets.
 - Do not edit notebooks mechanically unless the task specifically involves them.
+- `notebook/Growing Voxel.ipynb` begins with a Google Drive authorization cell and ends with a timestamped Drive backup cell that creates and verifies a portable checkpoint plus fresh web export; its following shutdown cell flushes Drive before calling Colab runtime unassignment.
 - Validate changes with the narrowest relevant check first and report checks that could not be run.
 - Never store secrets, credentials, access tokens, or private chat content here.
 
