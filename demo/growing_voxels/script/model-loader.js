@@ -56,8 +56,7 @@ export async function loadModel(name) {
                     ?? (channels + 6);
   const lppnOutDim = 4;
 
-  const originalImg = new URL('original.png', dirUrl).href;
-  const coarseImg = new URL('coarse.png', dirUrl).href;
+  const modelImg = new URL(`${encodeURIComponent(name)}.png`, dirUrl).href;
 
   return {
     name, meta, channels, coarseSize, targetSize, scale,
@@ -67,6 +66,6 @@ export async function loadModel(name) {
     numKernels, fcDim,
     numLppnLayers, lppnHiddenDim, lppnInputDim, lppnOutDim,
     weights,
-    originalImg, coarseImg,
+    modelImg,
   };
 }

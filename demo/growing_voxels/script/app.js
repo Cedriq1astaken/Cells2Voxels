@@ -1,12 +1,12 @@
 import { initGPU, configureCanvas } from './gpu.js?v=4';
-import { loadModel, loadModelIndex } from './model-loader.js?v=4';
+import { loadModel, loadModelIndex } from './model-loader.js?v=5';
 import { NCACompute } from './nca.js?v=5';
 import { LPPNCompute } from './lppn.js?v=6';
 import { VoxelRenderer } from './renderer.js?v=9';
 import { OrbitCamera } from './camera.js?v=10';
 import { Interaction } from './interaction.js?v=8';
 import { VoxelPicker } from './voxel-picker.js?v=2';
-import { UI } from './ui.js?v=9';
+import { UI } from './ui.js?v=10';
 
 class App {
   constructor() {
@@ -54,7 +54,7 @@ class App {
       pick: await fetch(new URL('../shaders/pick.wgsl?v=1', import.meta.url)).then(r => r.text()),
       livingMask: await fetch(new URL('../shaders/living_mask.wgsl?v=1', import.meta.url)).then(r => r.text()),
       compact: await fetch(new URL('../shaders/compact.wgsl?v=7', import.meta.url)).then(r => r.text()),
-      render: await fetch(new URL('../shaders/render.wgsl?v=8', import.meta.url)).then(r => r.text()),
+      render: await fetch(new URL('../shaders/render.wgsl?v=9', import.meta.url)).then(r => r.text()),
     };
 
     // Load models

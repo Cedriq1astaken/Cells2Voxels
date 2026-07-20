@@ -83,7 +83,10 @@ fn fs_main(v: VSOut) -> @location(0) vec4<f32> {
   let n = normalize(v.normal);
   let l = normalize(u.light_dir);
   let diffuse = max(dot(n, l), 0.0);
-  let ambient = 0.35;
+  let ambient = 0.38;
   let lit = v.color.rgb * (ambient + diffuse * 0.65);
-  return vec4<f32>(lit, v.color.a);
+  let luminance = dot(lit, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let vivid = mix(vec3<f32>(luminance), lit, 1.06);
+  let bright = clamp(vivid * 1.08, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(bright, v.color.a);
 }

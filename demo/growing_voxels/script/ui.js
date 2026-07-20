@@ -41,8 +41,7 @@ export class UI {
       infoTarget: document.getElementById('info-target'),
       infoScale: document.getElementById('info-scale'),
       infoGPU: document.getElementById('info-gpu'),
-      imgOriginal: document.getElementById('img-original'),
-      imgCoarse: document.getElementById('img-coarse'),
+      imgModel: document.getElementById('img-model'),
       btnInfo: document.getElementById('btn-info'),
       btnCloseInfo: document.getElementById('btn-close-info'),
     };
@@ -134,8 +133,15 @@ export class UI {
     if (this.els.infoScale) this.els.infoScale.textContent = model.scale;
     if (this.els.infoGPU) this.els.infoGPU.textContent = model.meta.gpu_used || 'N/A';
     this._syncModelLabel();
-    if (this.els.imgOriginal && model.originalImg) this.els.imgOriginal.src = model.originalImg;
-    if (this.els.imgCoarse && model.coarseImg) this.els.imgCoarse.src = model.coarseImg;
+    if (this.els.imgModel) {
+      this.els.imgModel.hidden = false;
+      if (this.els.imgModel.parentElement) this.els.imgModel.parentElement.hidden = false;
+      this.els.imgModel.onerror = () => {
+        this.els.imgModel.hidden = true;
+        if (this.els.imgModel.parentElement) this.els.imgModel.parentElement.hidden = true;
+      };
+      this.els.imgModel.src = model.modelImg;
+    }
   }
 
   setCrossSectionMax(rs) {
