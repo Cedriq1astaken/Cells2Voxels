@@ -22,7 +22,7 @@ const CUBE_VERTS = new Float32Array([
   1,0,0, 1,0,0,  1,1,0, 1,0,0,  1,1,1, 1,0,0,
 ]);
 
-const INSTANCE_BYTES = 8; // packed linear voxel index + packed RGBA8
+const INSTANCE_BYTES = 7 * 4; // XYZ and RGBA as direct f32 values
 const COUNT_READ_INTERVAL_HINT_MS = 250;
 
 export class VoxelRenderer {
@@ -46,7 +46,7 @@ export class VoxelRenderer {
     const { device, renderSize: RS } = this;
     this.totalVoxels = RS * RS * RS;
     const declaredOccupancy = Number.isFinite(this.maxOccupancy) ? this.maxOccupancy : 0.3;
-    const initialFraction = Math.min(1, Math.max(0.1, declaredOccupancy * 2));
+    const initialFraction = Math.min(1, Math.max(0.1, declaredOccupancy * 1.25));
     const initialCapacity = Math.min(
       this.totalVoxels,
       Math.max(1024, Math.ceil(this.totalVoxels * initialFraction)),
@@ -56,13 +56,13 @@ export class VoxelRenderer {
     // count[0] = total visible voxels, count[1] = instances written safely.
     this.countBuf = createEmptyBuffer(device, 8, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     this.indirectBuf = createBuffer(device, new Uint32Array([36, 0, 0, 0]), GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.uniformBuf = createEmptyBuffer(device, 128, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.uniformBuf = createEmptyBuffer(device, 160, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.compactParams = createEmptyBuffer(device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.countResetData = new Uint32Array(2);
     this.compactParamsData = new ArrayBuffer(16);
     this.compactParamsU32 = new Uint32Array(this.compactParamsData);
     this.compactParamsF32 = new Float32Array(this.compactParamsData);
-    this.renderUniformData = new Float32Array(32);
+    this.renderUniformData = new Float32Array(40);
 
     const compactModule = device.createShaderModule({ code: this.compactShaderCode });
     this.compactBGL = device.createBindGroupLayout({
@@ -150,7 +150,7 @@ export class VoxelRenderer {
         Math.ceil(required * 1.25),
       ),
     );
-    console.info(`Growing packed voxel instance capacity: ${this.maxInstances} -> ${nextCapacity}`);
+    console.info(`Growing voxel instance capacity: ${this.maxInstances} -> ${nextCapacity}`);
     this._replaceInstanceBuffer(nextCapacity);
     return true;
   }
@@ -196,7 +196,7 @@ export class VoxelRenderer {
     pass.end();
 
     // count[1] is clamped by construction, so indirect drawing cannot read
-    // beyond the dynamically sized packed instance buffer.
+    // beyond the dynamically sized instance buffer.
     encoder.copyBufferToBuffer(this.countBuf, 4, this.indirectBuf, 4, 4);
   }
 
@@ -214,9 +214,22 @@ export class VoxelRenderer {
     f[22] = lightDir[2];
     f[23] = 1.0 / RS;
     f[24] = this.rotateModel ? 1.0 : 0.0;
-    f[28] = this.modelRotation[0];
-    f[29] = this.modelRotation[1];
-    f[30] = this.modelRotation[2];
+
+    // Precompute Rz * Ry * Rx once on the CPU. WGSL uniform matrices use
+    // column-major storage with each vec3 column padded to four floats.
+    const [rx, ry, rz] = this.modelRotation;
+    const sx = Math.sin(rx), cx = Math.cos(rx);
+    const sy = Math.sin(ry), cy = Math.cos(ry);
+    const sz = Math.sin(rz), cz = Math.cos(rz);
+    f[28] = cz * cy;
+    f[29] = sz * cy;
+    f[30] = -sy;
+    f[32] = cz * sy * sx - sz * cx;
+    f[33] = sz * sy * sx + cz * cx;
+    f[34] = cy * sx;
+    f[36] = cz * sy * cx + sz * sx;
+    f[37] = sz * sy * cx - cz * sx;
+    f[38] = cy * cx;
     this.device.queue.writeBuffer(this.uniformBuf, 0, f);
 
     const pass = encoder.beginRenderPass({

@@ -44,6 +44,7 @@ export class UI {
       imgModel: document.getElementById('img-model'),
       btnInfo: document.getElementById('btn-info'),
       btnCloseInfo: document.getElementById('btn-close-info'),
+      performanceWarning: document.getElementById('performance-warning'),
     };
 
     this.els.btnStartStop?.addEventListener('click', () => this._fire('toggleRun'));
@@ -144,6 +145,12 @@ export class UI {
     }
   }
 
+  setPerformanceWarning(message) {
+    if (!this.els.performanceWarning) return;
+    this.els.performanceWarning.textContent = message;
+    this.els.performanceWarning.hidden = !message;
+  }
+
   setCrossSectionMax(rs) {
     for (const slider of [this.els.sliderCrossX, this.els.sliderCrossY, this.els.sliderCrossZ]) {
       if (slider) {
@@ -159,6 +166,10 @@ export class UI {
       this.els.sliderLppnScale.value = scale;
       this._updateSliderValues();
     }
+  }
+
+  setLppnScaleBusy(busy) {
+    if (this.els.sliderLppnScale) this.els.sliderLppnScale.disabled = busy;
   }
 
   get simRate() { return parseFloat(this.els.sliderSimRate?.value) || 1; }

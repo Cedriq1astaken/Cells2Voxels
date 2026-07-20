@@ -16,14 +16,19 @@ This file stores durable context for future agent work. Update it when project s
 - `demo/growing_radiance_fields/`: demo 2, incomplete radiance-field morphogenesis.
 - `demo/train_growing_voxels/`: demo 3, in-browser voxel-morphogenesis training.
 - `notebook/Growing Voxel.ipynb` and `notebook/Growing Radiance Field.ipynb` are currently present.
+- `notebook/Generate Model Images.ipynb` is a training-free utility that loads NPY/VOX targets or solid-voxelizes OBJ meshes with their Cells2Pixels VOL textures, displays four Matplotlib voxel views, and saves `[Model name].png` plus alternate views for model info panels.
 - The user described notebooks for demos 1 and 3, while the observed filenames naturally map to demos 1 and 2. Verify this mapping if it becomes relevant.
 
 ## Demo architecture
 
 - The demos are browser applications built with WebGPU JavaScript and WGSL.
 - `growing_voxels` loads exported NCA/LPPN weights, evolves a coarse 3D NCA in ping-pong GPU buffers, decodes a higher-resolution RGBA volume, compacts living voxels, and renders them interactively. It supports damage and regeneration.
+  - Rendering compaction keeps only occupied voxels with at least one exposed six-connected face. The full decoded volume remains available, and cross-section clipping exposes the newly cut interior surface before compaction.
+  - Simulation pacing is time-based with a 30 Hz baseline (`1x`), independent of render FPS; long-frame catch-up is clamped to avoid GPU submission bursts.
+  - Frog and Tomato show a GPU-performance warning. Any decoded size of 200 or greater loads paused and requires the user to press Start.
+  - LPPN scale rebuilds stop frame submission and await the WebGPU queue before destroying decoder/renderer resources; the scale control stays disabled during rebuilding.
   - Damage picking ray-marches the decoded RGBA alpha field on the GPU using the same alpha threshold as rendering, then clears full state vectors with a GPU brush pass. Evolution pauses while the pick readback is pending and shows one wound frame before resuming.
-  - Render instances use packed voxel-index/RGBA8 records in a dynamically growing GPU buffer. Voxel-count readback is throttled, stable bind groups are cached, and model/scale replacement explicitly destroys owned GPU buffers.
+  - Render instances use direct f32 XYZ/RGBA records in a dynamically growing GPU buffer, favoring vertex throughput over packed-memory savings. Voxel-count readback is throttled, stable bind groups are cached, and model/scale replacement explicitly destroys owned GPU buffers.
 - `growing_radiance_fields` evolves a coarse 3D NCA and uses neural radiance decoding plus ray rendering. Treat it as experimental and incomplete.
 - `train_growing_voxels` imports VOX or OBJ+VOL targets, trains a 3D NCA+LPPN in-browser using f16 WebGPU forward/backward buffers plus f32 Adam master weights and moments, previews the result, and exports a package compatible with the pretrained voxel demo.
 

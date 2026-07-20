@@ -2,11 +2,13 @@ import { initGPU, configureCanvas } from './gpu.js?v=4';
 import { loadModel, loadModelIndex } from './model-loader.js?v=5';
 import { NCACompute } from './nca.js?v=5';
 import { LPPNCompute } from './lppn.js?v=6';
-import { VoxelRenderer } from './renderer.js?v=9';
+import { VoxelRenderer } from './renderer.js?v=11';
 import { OrbitCamera } from './camera.js?v=10';
 import { Interaction } from './interaction.js?v=8';
 import { VoxelPicker } from './voxel-picker.js?v=2';
-import { UI } from './ui.js?v=10';
+import { UI } from './ui.js?v=11';
+
+const SIMULATION_HZ = 30;
 
 class App {
   constructor() {
@@ -24,6 +26,10 @@ class App {
     this._damagePickPending = false;
     this._damagePreviewPending = false;
     this._damageRequestId = 0;
+    this._lastLoopTime = performance.now();
+    this._simulationAccumulator = 0;
+    this._rebuildId = 0;
+    this._rebuilding = false;
   }
 
   async init() {
@@ -53,8 +59,8 @@ class App {
       lppn: await fetch(new URL('../shaders/lppn.wgsl?v=11', import.meta.url)).then(r => r.text()),
       pick: await fetch(new URL('../shaders/pick.wgsl?v=1', import.meta.url)).then(r => r.text()),
       livingMask: await fetch(new URL('../shaders/living_mask.wgsl?v=1', import.meta.url)).then(r => r.text()),
-      compact: await fetch(new URL('../shaders/compact.wgsl?v=7', import.meta.url)).then(r => r.text()),
-      render: await fetch(new URL('../shaders/render.wgsl?v=9', import.meta.url)).then(r => r.text()),
+      compact: await fetch(new URL('../shaders/compact.wgsl?v=9', import.meta.url)).then(r => r.text()),
+      render: await fetch(new URL('../shaders/render.wgsl?v=11', import.meta.url)).then(r => r.text()),
     };
 
     // Load models
@@ -93,10 +99,17 @@ class App {
     this.ui.on('modelChange', async (name) => {
       await this.loadModel(name);
     });
-    this.ui.on('lppnScaleChange', (newScale) => {
+    this.ui.on('lppnScaleChange', async (newScale) => {
       if (this.model && this.model.scale !== newScale) {
+        const previousScale = this.model.scale;
         this.model.scale = newScale;
-        this.rebuildLPPN();
+        try {
+          await this.rebuildLPPN();
+        } catch (error) {
+          this.model.scale = previousScale;
+          this.ui.setLppnScale(previousScale);
+          console.error('LPPN scale rebuild failed:', error);
+        }
       }
     });
     this.ui.on('crossChange', () => {
@@ -127,31 +140,62 @@ class App {
     this.nca = new NCACompute(this.device, model, this.shaders.nca, this.shaders.damage, this.hasF16);
     this.ui.setModelInfo(model);
     this.ui.setLppnScale(model.scale);
-    this.rebuildLPPN();
+    await this.rebuildLPPN();
   }
 
-  rebuildLPPN() {
-    this._cancelDamagePick();
-    this._invalidateCountRead();
-    this.picker?.destroy();
-    this.renderer?.destroy();
-    this.lppn?.destroy();
+  async rebuildLPPN() {
+    const rebuildId = ++this._rebuildId;
+    const hadResources = Boolean(this.lppn || this.renderer || this.picker);
+    const resumeAfterRebuild = this.running;
+    this.running = false;
+    this._simulationAccumulator = 0;
+    this._rebuilding = true;
+    this.ui.setRunning(false);
+    this.ui.setLppnScaleBusy(true);
 
-    this.lppn = new LPPNCompute(this.device, this.model, this.shaders.lppn, this.shaders.livingMask, this.hasF16);
-    const renderSize = this.lppn.renderSize;
-    this.renderer = new VoxelRenderer(this.device, this.format, renderSize, this.shaders.compact, this.shaders.render, this.model.livingThreshold, this.model.maxOccupancy, this.model.rotateModel);
-    this.interaction = new Interaction(this.camera, this.nca, renderSize, this.model.rotateModel);
-    this.picker = new VoxelPicker(this.device, renderSize, this.shaders.pick);
+    try {
+      // Pausing JavaScript does not drain already submitted GPU work. Stop frame
+      // submission above, then wait before destroying buffers still in flight.
+      if (hadResources) await this.device.queue.onSubmittedWorkDone();
+      if (rebuildId !== this._rebuildId) return;
 
-    this.ui.setCrossSectionMax(renderSize);
-    this.voxelCount = 0;
-    this.lastNcaStep = undefined;
-    this.lastPerfMode = undefined; // Force perf mode sync
-    this._decodeDirty = true;
-    this._volumeReady = false;
-    this._resize();
+      this._cancelDamagePick();
+      this._invalidateCountRead();
+      this.picker?.destroy();
+      this.renderer?.destroy();
+      this.lppn?.destroy();
+      this.picker = null;
+      this.renderer = null;
+      this.lppn = null;
+
+      this.lppn = new LPPNCompute(this.device, this.model, this.shaders.lppn, this.shaders.livingMask, this.hasF16);
+      const renderSize = this.lppn.renderSize;
+      const warnsAboutPerformance = this.model.name === 'Frog' || this.model.name === 'Tomato';
+      this.ui.setPerformanceWarning(warnsAboutPerformance
+        ? `Performance warning: ${this.model.name} is GPU-intensive and may run slowly.`
+        : '');
+      this.renderer = new VoxelRenderer(this.device, this.format, renderSize, this.shaders.compact, this.shaders.render, this.model.livingThreshold, this.model.maxOccupancy, this.model.rotateModel);
+      this.interaction = new Interaction(this.camera, this.nca, renderSize, this.model.rotateModel);
+      this.picker = new VoxelPicker(this.device, renderSize, this.shaders.pick);
+
+      this.ui.setCrossSectionMax(renderSize);
+      this.voxelCount = 0;
+      this.lastNcaStep = undefined;
+      this.lastPerfMode = undefined; // Force perf mode sync
+      this._decodeDirty = true;
+      this._volumeReady = false;
+      this._resize();
+
+      this.running = renderSize < 200 && resumeAfterRebuild;
+      this._lastLoopTime = performance.now();
+      this.ui.setRunning(this.running);
+    } finally {
+      if (rebuildId === this._rebuildId) {
+        this._rebuilding = false;
+        this.ui.setLppnScaleBusy(false);
+      }
+    }
   }
-
   _invalidateCountRead() {
     this._countRequestId++;
     this.countPending = false;
@@ -214,7 +258,12 @@ class App {
   _loop() {
     requestAnimationFrame(() => this._loop());
 
-    if (!this.nca || !this.lppn || !this.renderer) return;
+    if (this._rebuilding || !this.nca || !this.lppn || !this.renderer) return;
+
+    const now = performance.now();
+    // Clamp long gaps so background tabs and GPU stalls do not enqueue a burst.
+    const elapsedSeconds = Math.min((now - this._lastLoopTime) / 1000, 0.1);
+    this._lastLoopTime = now;
 
     // Submit each NCA step separately. Its uniform and random buffers are
     // queue-written per step, so batching multiple steps in one command buffer
@@ -222,14 +271,16 @@ class App {
     const previewDamage = this._damagePreviewPending;
     if (this.running && !this._damagePickPending && !previewDamage) {
       const rate = this.ui.simRate;
-      this.stepAccumulator = (this.stepAccumulator || 0) + rate;
-      const stepsThisFrame = Math.floor(this.stepAccumulator);
-      this.stepAccumulator -= stepsThisFrame;
+      this._simulationAccumulator += elapsedSeconds * SIMULATION_HZ * rate;
+      const stepsThisFrame = Math.floor(this._simulationAccumulator);
+      this._simulationAccumulator -= stepsThisFrame;
       for (let i = 0; i < stepsThisFrame; i++) {
         const ncaEncoder = this.device.createCommandEncoder();
         this.nca.encode(ncaEncoder);
         this.device.queue.submit([ncaEncoder.finish()]);
       }
+    } else {
+      this._simulationAccumulator = 0;
     }
 
     const encoder = this.device.createCommandEncoder();
@@ -272,7 +323,6 @@ class App {
     this.device.queue.submit([encoder.finish()]);
     if (previewDamage) this._damagePreviewPending = false;
 
-    const now = performance.now();
     // Statistics do not need a per-frame GPU map. The full count also drives
     // overflow-safe growth of the packed instance buffer.
     const countInterval = this.renderer.countReadIntervalHintMs ?? 250;

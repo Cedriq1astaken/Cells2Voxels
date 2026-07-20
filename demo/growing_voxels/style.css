@@ -225,6 +225,28 @@ select {
   outline: none;
 }
 
+#performance-warning {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  z-index: 11;
+  max-width: min(34rem, calc(100vw - 2rem));
+  transform: translateX(-50%);
+  border: 1px solid rgba(246, 245, 240, 0.5);
+  background: var(--status-error);
+  box-shadow: 0 0.45rem 1.2rem var(--shadow);
+  color: var(--paper);
+  padding: 0.55rem 0.85rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.05em;
+  text-align: center;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+#performance-warning[hidden] {
+  display: none;
+}
 #left-panel {
   position: absolute;
   top: 1rem;
