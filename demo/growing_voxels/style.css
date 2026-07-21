@@ -164,6 +164,13 @@ select:focus-visible {
   transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
+.top-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .top-btn:hover,
 .top-btn:focus-visible,
 .top-btn.is-active {
