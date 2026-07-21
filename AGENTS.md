@@ -23,10 +23,13 @@ This file stores durable context for future agent work. Update it when project s
 
 - The demos are browser applications built with WebGPU JavaScript and WGSL.
 - `growing_voxels` loads exported NCA/LPPN weights, evolves a coarse 3D NCA in ping-pong GPU buffers, decodes a higher-resolution RGBA volume, compacts living voxels, and renders them interactively. It supports damage and regeneration.
+  - Every model initially loads at a global 4x LPPN display scale; the scale control can still change it at runtime, independently of the scale recorded in the model manifest.
   - Rendering compaction keeps only occupied voxels with at least one exposed six-connected face. The full decoded volume remains available, and cross-section clipping exposes the newly cut interior surface before compaction.
   - Simulation pacing is time-based with a 30 Hz baseline (`1x`), independent of render FPS; long-frame catch-up is clamped to avoid GPU submission bursts.
   - Frog and Tomato show a GPU-performance warning. Any decoded size of 200 or greater loads paused and requires the user to press Start.
   - LPPN scale rebuilds stop frame submission and await the WebGPU queue before destroying decoder/renderer resources; the scale control stays disabled during rebuilding.
+  - LPPN decoding remains dense in storage but sparse in neural evaluation: a conservative fine-alpha scan compacts only 4x4x4 blocks whose one-voxel-expanded neighborhood can pass the existing living test, then an indirect dispatch evaluates those blocks. The output is cleared before each sparse decode so damage and disappearing regions cannot leave stale voxels.
+  - On devices with `shader-f16`, the fine-resolution decoded RGBA and interpolated alpha buffers use f16 storage (with an f32 fallback); LPPN neural calculations remain f32.
   - Damage picking ray-marches the decoded RGBA alpha field on the GPU using the same alpha threshold as rendering, then clears full state vectors with a GPU brush pass. Evolution pauses while the pick readback is pending and shows one wound frame before resuming.
   - Render instances use direct f32 XYZ/RGBA records in a dynamically growing GPU buffer, favoring vertex throughput over packed-memory savings. Voxel-count readback is throttled, stable bind groups are cached, and model/scale replacement explicitly destroys owned GPU buffers.
 - `growing_radiance_fields` evolves a coarse 3D NCA and uses neural radiance decoding plus ray rendering. Treat it as experimental and incomplete.

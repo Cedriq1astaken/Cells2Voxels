@@ -1,3 +1,5 @@
+{{F16_ENABLE}}
+
 const RS: u32 = {{RS}}u;
 const RS_F: f32 = f32(RS);
 const VOL: u32 = RS * RS * RS;
@@ -13,7 +15,7 @@ struct PickParams {
 }
 
 // The same planar RGBA volume consumed by compact.wgsl.
-@group(0) @binding(0) var<storage, read> voxels: array<f32>;
+@group(0) @binding(0) var<storage, read> voxels: array<{{DECODE_TYPE}}>;
 @group(0) @binding(1) var<uniform> params: PickParams;
 // [found, x, y, z]
 @group(0) @binding(2) var<storage, read_write> result: array<u32>;
@@ -94,7 +96,7 @@ fn pick_visible_voxel() {
     let z = u32(cell.z);
     let index = z * RS * RS + y * RS + x;
     // This is exactly compact.wgsl's inclusion predicate.
-    if (voxels[3u * VOL + index] > params.alpha_threshold) {
+    if (f32(voxels[3u * VOL + index]) > params.alpha_threshold) {
       result[0] = 1u;
       result[1] = x;
       result[2] = y;

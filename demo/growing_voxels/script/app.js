@@ -1,14 +1,15 @@
 import { initGPU, configureCanvas } from './gpu.js?v=4';
 import { loadModel, loadModelIndex } from './model-loader.js?v=5';
 import { NCACompute } from './nca.js?v=5';
-import { LPPNCompute } from './lppn.js?v=6';
-import { VoxelRenderer } from './renderer.js?v=11';
+import { LPPNCompute } from './lppn.js?v=8';
+import { VoxelRenderer } from './renderer.js?v=12';
 import { OrbitCamera } from './camera.js?v=10';
 import { Interaction } from './interaction.js?v=8';
-import { VoxelPicker } from './voxel-picker.js?v=2';
+import { VoxelPicker } from './voxel-picker.js?v=3';
 import { UI } from './ui.js?v=11';
 
 const SIMULATION_HZ = 30;
+const DEFAULT_LPPN_SCALE = 4;
 
 class App {
   constructor() {
@@ -56,10 +57,11 @@ class App {
     this.shaders = {
       nca: await fetch(new URL('../shaders/nca.wgsl?v=10', import.meta.url)).then(r => r.text()),
       damage: await fetch(new URL('../shaders/damage.wgsl?v=1', import.meta.url)).then(r => r.text()),
-      lppn: await fetch(new URL('../shaders/lppn.wgsl?v=11', import.meta.url)).then(r => r.text()),
-      pick: await fetch(new URL('../shaders/pick.wgsl?v=1', import.meta.url)).then(r => r.text()),
-      livingMask: await fetch(new URL('../shaders/living_mask.wgsl?v=1', import.meta.url)).then(r => r.text()),
-      compact: await fetch(new URL('../shaders/compact.wgsl?v=9', import.meta.url)).then(r => r.text()),
+      lppn: await fetch(new URL('../shaders/lppn.wgsl?v=13', import.meta.url)).then(r => r.text()),
+      pick: await fetch(new URL('../shaders/pick.wgsl?v=2', import.meta.url)).then(r => r.text()),
+      livingMask: await fetch(new URL('../shaders/living_mask.wgsl?v=2', import.meta.url)).then(r => r.text()),
+      activeBlocks: await fetch(new URL('../shaders/active_blocks.wgsl?v=3', import.meta.url)).then(r => r.text()),
+      compact: await fetch(new URL('../shaders/compact.wgsl?v=10', import.meta.url)).then(r => r.text()),
       render: await fetch(new URL('../shaders/render.wgsl?v=11', import.meta.url)).then(r => r.text()),
     };
 
@@ -136,6 +138,7 @@ class App {
 
     this._cancelDamagePick();
     this.nca?.destroy();
+    model.scale = DEFAULT_LPPN_SCALE;
     this.model = model;
     this.nca = new NCACompute(this.device, model, this.shaders.nca, this.shaders.damage, this.hasF16);
     this.ui.setModelInfo(model);
@@ -168,15 +171,15 @@ class App {
       this.renderer = null;
       this.lppn = null;
 
-      this.lppn = new LPPNCompute(this.device, this.model, this.shaders.lppn, this.shaders.livingMask, this.hasF16);
+      this.lppn = new LPPNCompute(this.device, this.model, this.shaders.lppn, this.shaders.livingMask, this.shaders.activeBlocks, this.hasF16);
       const renderSize = this.lppn.renderSize;
       const warnsAboutPerformance = this.model.name === 'Frog' || this.model.name === 'Tomato';
       this.ui.setPerformanceWarning(warnsAboutPerformance
         ? `Performance warning: ${this.model.name} is GPU-intensive and may run slowly.`
         : '');
-      this.renderer = new VoxelRenderer(this.device, this.format, renderSize, this.shaders.compact, this.shaders.render, this.model.livingThreshold, this.model.maxOccupancy, this.model.rotateModel);
+      this.renderer = new VoxelRenderer(this.device, this.format, renderSize, this.shaders.compact, this.shaders.render, this.model.livingThreshold, this.model.maxOccupancy, this.model.rotateModel, this.hasF16);
       this.interaction = new Interaction(this.camera, this.nca, renderSize, this.model.rotateModel);
-      this.picker = new VoxelPicker(this.device, renderSize, this.shaders.pick);
+      this.picker = new VoxelPicker(this.device, renderSize, this.shaders.pick, this.hasF16);
 
       this.ui.setCrossSectionMax(renderSize);
       this.voxelCount = 0;

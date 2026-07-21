@@ -3,16 +3,20 @@ import { createEmptyBuffer } from './gpu.js';
 // Finds the first decoded voxel that the renderer would include for a click ray.
 // Only a four-u32 result is read back, so picking does not download the volume.
 export class VoxelPicker {
-  constructor(device, renderSize, shaderTemplate) {
+  constructor(device, renderSize, shaderTemplate, hasF16 = false) {
     this.device = device;
     this.renderSize = renderSize;
     this.shaderTemplate = shaderTemplate;
+    this.hasF16 = hasF16;
     this.destroyed = false;
     this._build();
   }
 
   _build() {
-    const code = this.shaderTemplate.replace(/{{RS}}/g, this.renderSize);
+    const code = this.shaderTemplate
+      .replace(/{{RS}}/g, this.renderSize)
+      .replace(/{{F16_ENABLE}}/g, this.hasF16 ? 'enable f16;' : '')
+      .replace(/{{DECODE_TYPE}}/g, this.hasF16 ? 'f16' : 'f32');
     const module = this.device.createShaderModule({ code });
     this.uniformBuf = createEmptyBuffer(
       this.device,

@@ -26,7 +26,7 @@ const INSTANCE_BYTES = 7 * 4; // XYZ and RGBA as direct f32 values
 const COUNT_READ_INTERVAL_HINT_MS = 250;
 
 export class VoxelRenderer {
-  constructor(device, format, renderSize, compactShaderCode, renderShaderCode, livingThreshold = 0.1, maxOccupancy = 0.3, rotateModel = true) {
+  constructor(device, format, renderSize, compactShaderCode, renderShaderCode, livingThreshold = 0.1, maxOccupancy = 0.3, rotateModel = true, hasF16 = false) {
     this.device = device;
     this.format = format;
     this.renderSize = renderSize;
@@ -35,6 +35,7 @@ export class VoxelRenderer {
     this.livingThreshold = livingThreshold;
     this.maxOccupancy = maxOccupancy;
     this.rotateModel = rotateModel;
+    this.hasF16 = hasF16;
     this.modelRotation = [0, 0, 0];
     this.voxelCount = 0;
     this.destroyed = false;
@@ -64,7 +65,10 @@ export class VoxelRenderer {
     this.compactParamsF32 = new Float32Array(this.compactParamsData);
     this.renderUniformData = new Float32Array(40);
 
-    const compactModule = device.createShaderModule({ code: this.compactShaderCode });
+    const compactCode = this.compactShaderCode
+      .replace(/{{F16_ENABLE}}/g, this.hasF16 ? 'enable f16;' : '')
+      .replace(/{{DECODE_TYPE}}/g, this.hasF16 ? 'f16' : 'f32');
+    const compactModule = device.createShaderModule({ code: compactCode });
     this.compactBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },

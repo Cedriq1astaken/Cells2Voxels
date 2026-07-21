@@ -11,10 +11,11 @@ const INPUT_DIM: u32 = {{INPUT_DIM}}u;
 const PI: f32 = 3.141592653589793;
 
 @group(0) @binding(0) var<storage, read> state: array<{{STATE_TYPE}}>;      // [C, S, S, S]
-@group(0) @binding(1) var<storage, read_write> output: array<f32>; // [4, RS, RS, RS]
+@group(0) @binding(1) var<storage, read_write> output: array<{{DECODE_TYPE}}>; // [4, RS, RS, RS]
+@group(0) @binding(2) var<storage, read> active_blocks: array<u32>;
 @group(0) @binding(3) var<uniform> params: array<vec4<f32>, 3>;
 
-@group(0) @binding(4) var<storage, read> fine_alpha: array<f32>; // [RS, RS, RS]
+@group(0) @binding(4) var<storage, read> fine_alpha: array<{{DECODE_TYPE}}>; // [RS, RS, RS]
 @group(0) @binding(5) var<storage, read> l0_w: array<f32>;  // [HD, INPUT_DIM]
 @group(0) @binding(6) var<storage, read> l0_b: array<f32>;  // [HD]
 @group(0) @binding(7) var<storage, read> l1_w: array<f32>;  // [HD, HD]
@@ -23,6 +24,8 @@ const PI: f32 = 3.141592653589793;
 @group(0) @binding(10) var<storage, read> l2_b: array<f32>; // [HD]
 @group(0) @binding(11) var<storage, read> l3_w: array<f32>; // [4, HD]
 @group(0) @binding(12) var<storage, read> l3_b: array<f32>; // [4]
+// [dispatch x, dispatch y, dispatch z, active block count]
+@group(0) @binding(13) var<storage, read> dispatch_args: array<u32>;
 fn state_at(c: u32, z: i32, y: i32, x: i32) -> f32 {
   let size = i32(S);
   let wz = (z % size + size) % size;
@@ -39,11 +42,11 @@ fn out_idx(c: u32, z: u32, y: u32, x: u32) -> u32 {
 // over a zero-padded 3x3x3 neighborhood. The field is decoded once in
 // living_mask.wgsl instead of redoing 27 trilinear samples here.
 fn fine_alpha_at(x: u32, y: u32, z: u32) -> f32 {
-  return fine_alpha[z * RS * RS + y * RS + x];
+  return f32(fine_alpha[z * RS * RS + y * RS + x]);
 }
 
 fn fine_living_mask(fx: u32, fy: u32, fz: u32) -> bool {
-  var max_alpha = 0.0;
+  var max_alpha: f32 = 0.0;
   for (var dz: i32 = -1; dz <= 1; dz++) {
     for (var dy: i32 = -1; dy <= 1; dy++) {
       for (var dx: i32 = -1; dx <= 1; dx++) {
@@ -60,8 +63,21 @@ fn fine_living_mask(fx: u32, fy: u32, fz: u32) -> bool {
 }
 
 @compute @workgroup_size(4, 4, 4)
-fn lppn_decode(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let fx = gid.x; let fy = gid.y; let fz = gid.z;
+fn lppn_decode(
+  @builtin(workgroup_id) workgroup_id: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
+  let active_slot = workgroup_id.y * dispatch_args[0] + workgroup_id.x;
+  if (active_slot >= dispatch_args[3]) { return; }
+
+  let block_index = active_blocks[active_slot];
+  let blocks = (RS + 3u) / 4u;
+  let block_x = block_index % blocks;
+  let block_y = (block_index / blocks) % blocks;
+  let block_z = block_index / (blocks * blocks);
+  let fx = block_x * 4u + local_id.x;
+  let fy = block_y * 4u + local_id.y;
+  let fz = block_z * 4u + local_id.z;
   if (fx >= RS || fy >= RS || fz >= RS) { return; }
 
   let scale = params[0].z;
@@ -70,10 +86,10 @@ fn lppn_decode(@builtin(global_invocation_id) gid: vec3<u32>) {
   let hidden_omega = params[1].z;
 
   if (f32(fx) >= cross_x || f32(fy) >= cross_y || f32(fz) >= cross_z) {
-    output[out_idx(0u, fz, fy, fx)] = 0.0;
-    output[out_idx(1u, fz, fy, fx)] = 0.0;
-    output[out_idx(2u, fz, fy, fx)] = 0.0;
-    output[out_idx(3u, fz, fy, fx)] = 0.0;
+    output[out_idx(0u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
+    output[out_idx(1u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
+    output[out_idx(2u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
+    output[out_idx(3u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
     return;
   }
 
@@ -83,10 +99,10 @@ fn lppn_decode(@builtin(global_invocation_id) gid: vec3<u32>) {
   let cf_z = (f32(fz) + 0.5) / scale - 0.5;
 
   if (!fine_living_mask(fx, fy, fz)) {
-    output[out_idx(0u, fz, fy, fx)] = 0.0;
-    output[out_idx(1u, fz, fy, fx)] = 0.0;
-    output[out_idx(2u, fz, fy, fx)] = 0.0;
-    output[out_idx(3u, fz, fy, fx)] = 0.0;
+    output[out_idx(0u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
+    output[out_idx(1u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
+    output[out_idx(2u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
+    output[out_idx(3u, fz, fy, fx)] = {{DECODE_TYPE}}(0.0);
     return;
   }
 
@@ -186,9 +202,9 @@ fn lppn_decode(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Preserve the decoder's raw linear RGBA output. The compaction/rendering
   // stage clamps values for display, while training and inference semantics
   // remain identical.
-  output[out_idx(0u, fz, fy, fx)] = rgba[0];
-  output[out_idx(1u, fz, fy, fx)] = rgba[1];
-  output[out_idx(2u, fz, fy, fx)] = rgba[2];
-  output[out_idx(3u, fz, fy, fx)] = rgba[3];
+  output[out_idx(0u, fz, fy, fx)] = {{DECODE_TYPE}}(rgba[0]);
+  output[out_idx(1u, fz, fy, fx)] = {{DECODE_TYPE}}(rgba[1]);
+  output[out_idx(2u, fz, fy, fx)] = {{DECODE_TYPE}}(rgba[2]);
+  output[out_idx(3u, fz, fy, fx)] = {{DECODE_TYPE}}(rgba[3]);
 
 }

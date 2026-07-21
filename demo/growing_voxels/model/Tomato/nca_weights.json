@@ -1,9 +1,9 @@
 {
   "meta": {
     "channels": 48,
-    "coarse_size": 66,
-    "target_size": 264,
-    "scale": 4.0,
+    "coarse_size": 32,
+    "target_size": 256,
+    "scale": 8.0,
     "living_channel": 3,
     "living_threshold": 0.1,
     "num_frequencies": 1,
@@ -11,10 +11,10 @@
     "lppn_hidden_omega_0": 10.0,
     "edge_loss_weight": 0.0,
     "iterations": 6000,
-    "max_occupancy": 0.13591097789186632,
+    "max_occupancy": 0.14421944618225097,
     "gpu_used": "NVIDIA A100-SXM4-80GB",
     "target_path": "/content/tomato.npy",
-    "ram_used_gb": 2.91
+    "ram_used_gb": 2.78
   },
   "perception": {
     "perceive.weight": {

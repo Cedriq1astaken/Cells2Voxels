@@ -1,8 +1,8 @@
 {
   "meta": {
     "channels": 48,
-    "coarse_size": 34,
-    "target_size": 136,
+    "coarse_size": 32,
+    "target_size": 128,
     "scale": 4.0,
     "living_channel": 3,
     "living_threshold": 0.1,
@@ -10,11 +10,11 @@
     "lppn_first_omega_0": 10.0,
     "lppn_hidden_omega_0": 10.0,
     "edge_loss_weight": 0.0,
-    "iterations": 8000,
+    "iterations": 4000,
     "max_occupancy": 0.1,
-    "gpu_used": "NVIDIA L4",
+    "gpu_used": "NVIDIA A100-SXM4-80GB",
     "target_path": "/content/data/meshes/airplane/airplane.obj",
-    "ram_used_gb": 2.32
+    "ram_used_gb": 3.19
   },
   "perception": {
     "perceive.weight": {

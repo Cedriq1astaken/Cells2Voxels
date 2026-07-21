@@ -1,3 +1,5 @@
+{{F16_ENABLE}}
+
 struct VoxelInstance {
   px: f32, py: f32, pz: f32,
   r: f32, g: f32, b: f32, a: f32,
@@ -10,11 +12,15 @@ struct Params {
   pad: u32,
 }
 
-@group(0) @binding(0) var<storage, read> voxels: array<f32>; // [4, RS, RS, RS]
+@group(0) @binding(0) var<storage, read> voxels: array<{{DECODE_TYPE}}>; // [4, RS, RS, RS]
 @group(0) @binding(1) var<storage, read_write> instances: array<VoxelInstance>;
 // count[0] is the full visible count; count[1] is the safely writable draw count.
 @group(0) @binding(2) var<storage, read_write> count: array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> params: Params;
+
+fn voxel_at(index: u32) -> f32 {
+  return f32(voxels[index]);
+}
 
 
 @compute @workgroup_size(4, 4, 4)
@@ -27,19 +33,19 @@ fn compact(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   let vol = RS * RS * RS;
   let idx = z * RS * RS + y * RS + x;
-  let a = voxels[3u * vol + idx];
+  let a = voxel_at(3u * vol + idx);
   if (a <= params.threshold) { return; }
 
   // Keep only the exposed surface. The decoded volume remains complete, and
   // cross-sectioning exposes a new surface because clipped neighbors are empty.
   var fully_occluded = false;
   if (x > 0u && x < RS - 1u && y > 0u && y < RS - 1u && z > 0u && z < RS - 1u) {
-    let a_xp = voxels[3u * vol + z * RS * RS + y * RS + (x + 1u)];
-    let a_xn = voxels[3u * vol + z * RS * RS + y * RS + (x - 1u)];
-    let a_yp = voxels[3u * vol + z * RS * RS + (y + 1u) * RS + x];
-    let a_yn = voxels[3u * vol + z * RS * RS + (y - 1u) * RS + x];
-    let a_zp = voxels[3u * vol + (z + 1u) * RS * RS + y * RS + x];
-    let a_zn = voxels[3u * vol + (z - 1u) * RS * RS + y * RS + x];
+    let a_xp = voxel_at(3u * vol + z * RS * RS + y * RS + (x + 1u));
+    let a_xn = voxel_at(3u * vol + z * RS * RS + y * RS + (x - 1u));
+    let a_yp = voxel_at(3u * vol + z * RS * RS + (y + 1u) * RS + x);
+    let a_yn = voxel_at(3u * vol + z * RS * RS + (y - 1u) * RS + x);
+    let a_zp = voxel_at(3u * vol + (z + 1u) * RS * RS + y * RS + x);
+    let a_zn = voxel_at(3u * vol + (z - 1u) * RS * RS + y * RS + x);
 
     if (a_xp > params.threshold && a_xn > params.threshold &&
         a_yp > params.threshold && a_yn > params.threshold &&
@@ -58,8 +64,8 @@ fn compact(@builtin(global_invocation_id) gid: vec3<u32>) {
   instances[slot].px = f32(x);
   instances[slot].py = f32(y);
   instances[slot].pz = f32(z);
-  instances[slot].r = clamp(voxels[0u * vol + idx], 0.0, 1.0);
-  instances[slot].g = clamp(voxels[1u * vol + idx], 0.0, 1.0);
-  instances[slot].b = clamp(voxels[2u * vol + idx], 0.0, 1.0);
+  instances[slot].r = clamp(voxel_at(0u * vol + idx), 0.0, 1.0);
+  instances[slot].g = clamp(voxel_at(1u * vol + idx), 0.0, 1.0);
+  instances[slot].b = clamp(voxel_at(2u * vol + idx), 0.0, 1.0);
   instances[slot].a = clamp(a, 0.0, 1.0);
 }
