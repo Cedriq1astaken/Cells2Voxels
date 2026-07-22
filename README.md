@@ -37,12 +37,16 @@ The training preview uses the same rasterized approach as the pretrained viewer.
 
 A quick warning: this is still an experimental browser demo, not a replacement for full-scale training. Larger models can use a lot of GPU memory and may not run well on an average computer
 
+## Notebooks
+
+The notebooks contain the longer-form training workflows behind the demos. They are mainly for experimenting with targets, training settings, and exports rather than simply running the finished viewer.
+
+### [Growing Voxel](notebook/Growing%20Voxel.ipynb)
+
+The main 3D voxel training notebook: it loads `.vox`, `.npy`, or `.obj` + `.vol` targets, trains a coarse 3D NCA with an LPPN decoder, and includes previews, slices, loss plots, recovery tests, and selectable training modes. It can export a browser-compatible model and create a verified Google Drive backup, and is intended to run in Google Colab with a CUDA GPU.
+
 ## TODO (These are ideas and may never be completed)
 
 ### Growing Radiance Fields
 
-- [ ] Explore a version where the 3D NCA grows a radiance field instead of a voxel model. Not sure whether it would run on browser yet tho
-
-## Notebooks
-
-`notebook/` contains the accompanying exploratory notebooks, including the growing-voxel workflow.
+- [ ] Explore a version where the 3D NCA grows a radiance field instead of a voxel model.
