@@ -35,6 +35,7 @@ The training preview uses the same rasterized approach as the pretrained viewer.
 A quick warning: this is still an experimental browser demo, not a replacement for full-scale training. Larger models can use a lot of GPU memory and may not run well on an average computer
 
 ## Notebooks
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Cedriq1astaken/Cells2Voxels/blob/master/notebook/Growing_Voxel.ipynb)
 
 The notebooks contain the longer-form training workflows behind the demos. They are mainly for experimenting with targets, training settings, and exports rather than simply running the finished viewer.
 
