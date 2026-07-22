@@ -1,9 +1,9 @@
 # Cells2Voxels
 
-A browser-based set of 3D morphogenesis demos inspired by [Neural Cellular Automata: From Cells to Pixels](https://arxiv.org/html/2506.22899v2).
+A browser-based set of 3D morphogenesis unofficial Put demos inspired by [Neural Cellular Automata: From Cells to Pixels](https://arxiv.org/html/2506.22899v2).
 ![DEMO front page](/misc/demo.png)
 
-[Launch the live demo](https://cedriq1astaken.github.io/Cells2Voxels/demo/growing_voxels/) · [Open the training demo](http://cedriq1astaken.github.io/Cells2Voxels/demo/train_growing_voxels/)
+[Launch the live demo](https://cedriq1astaken.github.io/Cells2Voxels/demo/growing_voxels/) · [Open the training demo](https://cedriq1astaken.github.io/Cells2Voxels/demo/train_growing_voxels/)
 
 ## Demos
 
@@ -14,7 +14,7 @@ The training demo uses f16 WebGPU forward/backward passes with f32 Adam master w
 
 ### Growing Voxels
 
-The demo runs entirely on webgpu, from the model inferance to the visualization. The NCA grows on a small 3D grid (usually 4 or 8 times small than the original model). At every step, each cell looks at its neighbors and updates its own values. The LPPN then turns this small grid into a larger colored voxel model by using both the cell values and the position being drawn inside each cell. A living mask decides which parts of the model should appear.
+The demo runs entirely on webgpu, from the model inference to the visualization. The NCA grows on a small 3D grid (usually 4 or 8 times smaller than the original model). At every step, each cell looks at its neighbors and updates its own values. The LPPN then turns this small grid into a larger colored voxel model by using both the cell values and the position being drawn inside each cell. A living mask decides which parts of the model should appear.
 
 The viewer supports real-time orbit controls, per-axis model rotation, adjustable LPPN resolution (default by 4 times the NCA grid but can go up to 8), cross sections (some models have interior data), and click-to-damage regeneration. The full decoded volume is retained for damage and sectioning, while surface compaction avoids drawing completely enclosed voxels. Simulation and rendering are paced separately so the interface can remain responsive while larger models grow.
 
@@ -30,13 +30,13 @@ The GPU handles the growth steps, voxel decoding, loss calculation, backpropagat
 
 The training preview uses the same rasterized approach as the pretrained viewer. It removes hidden voxels, then draws copies of one shared cube for the visible voxels. Its voxel data uses f16 to save memory.
 
-I should warn tho that it is a demo and should not be used for full scale training on the average computer.
+A quick warning: this is still an experimental browser demo, not a replacement for full-scale training. Larger models can use a lot of GPU memory and may not run well on an average computer
 
 ## TODO (These are ideas and may never be completed)
 
 ### Growing Radiance Fields
 
-[] Explore a version where the 3D NCA grows a radiance field instead of a voxel model. 
+- [ ] Explore a version where the 3D NCA grows a radiance field instead of a voxel model. 
 
 ## Notebooks
 
