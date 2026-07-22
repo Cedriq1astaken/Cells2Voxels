@@ -32,6 +32,7 @@ export class VoxelTrainer {
     this.baseLearningRate = config.learningRate;
     this.learningRate = config.learningRate;
     this.iteration = 0;
+    this.adamIteration = 0;
     this.lastReportIteration = 0;
     this.lastReportTime = 0;
     this.running = false;
@@ -772,6 +773,7 @@ export class VoxelTrainer {
     const nextIteration = this.iteration + 1;
     if (this.iteration > 0 && this.iteration % 4000 === 0) {
       this.queue.writeBuffer(this.poolBuffer, 0, this.initialPoolData);
+      this.adamIteration = 0;
     }
     this.updateLearningRate();
     this.resetParameterArena();
@@ -889,7 +891,8 @@ export class VoxelTrainer {
     );
     this.encodeNcaBackward(pass, rolloutSteps, randomSeed);
     if (keepPreview) this.encodePreview(pass, rolloutSteps);
-    this.encodeOptimizer(pass, this.iteration % 4000 + 1);
+    this.adamIteration += 1;
+    this.encodeOptimizer(pass, this.adamIteration);
     pass.end();
 
     encoder.copyBufferToBuffer(
@@ -967,6 +970,78 @@ export class VoxelTrainer {
     this.loopPromise = null;
   }
 
+  async captureWeights() {
+    const capturedIteration = this.iteration;
+    const readbacks = this.parameters.map(parameter => createEmptyBuffer(
+      this.device,
+      alignedF32Bytes(parameter.count),
+      GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    ));
+    const encoder = this.device.createCommandEncoder({ label: 'checkpoint_capture' });
+    this.parameters.forEach((parameter, index) => {
+      encoder.copyBufferToBuffer(parameter.masterWeight, 0, readbacks[index], 0, alignedF32Bytes(parameter.count));
+    });
+    this.queue.submit([encoder.finish()]);
+    const variables = {};
+    await Promise.all(readbacks.map(async (buffer, index) => {
+      await buffer.mapAsync(GPUMapMode.READ);
+      const parameter = this.parameters[index];
+      variables[parameter.name] = new Float32Array(
+        new Float32Array(buffer.getMappedRange(), 0, parameter.count),
+      );
+      buffer.unmap();
+      buffer.destroy();
+    }));
+    return { iteration: capturedIteration, variables };
+  }
+
+  async restoreWeights(snapshot) {
+    await this.stop();
+    for (const parameter of this.parameters) {
+      const values = snapshot.variables[parameter.name];
+      if (!(values instanceof Float32Array) || values.length !== parameter.count) {
+        throw new Error(`Checkpoint parameter mismatch: ${parameter.name}`);
+      }
+      this.queue.writeBuffer(parameter.masterWeight, 0, values);
+      this.queue.writeBuffer(parameter.weight, 0, toFloat16Array(values));
+    }
+    this.queue.writeBuffer(this.poolBuffer, 0, this.initialPoolData);
+    const encoder = this.device.createCommandEncoder({ label: 'checkpoint_reset_optimizer' });
+    for (const parameter of this.parameters) {
+      encoder.clearBuffer(parameter.gradient);
+      encoder.clearBuffer(parameter.firstMoment);
+      encoder.clearBuffer(parameter.secondMoment);
+    }
+    this.queue.submit([encoder.finish()]);
+    this.iteration = snapshot.iteration;
+    this.adamIteration = 0;
+    this.updateLearningRate();
+    this.lastReportIteration = this.iteration;
+    this.lastReportTime = performance.now();
+    await this.queue.onSubmittedWorkDone();
+    return this.previewFromSeed();
+  }
+
+  async previewFromSeed() {
+    const rolloutSteps = this.config.stepMax;
+    const randomSeed = Math.floor(Math.random() * 0xffffffff) >>> 0;
+    this.resetParameterArena();
+    const encoder = this.device.createCommandEncoder({ label: 'checkpoint_preview' });
+    encoder.copyBufferToBuffer(this.seedBuffer, 0, this.stateHistory, 0, this.poolStateBytes);
+    const pass = encoder.beginComputePass({ label: 'checkpoint_preview' });
+    const bindGroup = this.ncaForwardBindGroup();
+    for (let step = 0; step < rolloutSteps; step++) {
+      const params = this.ncaParams(step, rolloutSteps, randomSeed);
+      this.dispatch(pass, this.pipelines.ncaHidden, bindGroup, this.cells * this.fcDim, params);
+      this.dispatch(pass, this.pipelines.ncaCandidate, bindGroup, this.stateElements, params);
+      this.dispatch(pass, this.pipelines.ncaStep, bindGroup, this.stateElements, params);
+    }
+    this.encodePreview(pass, rolloutSteps);
+    pass.end();
+    this.queue.submit([encoder.finish()]);
+    await this.queue.onSubmittedWorkDone();
+    return { buffer: this.previewBuffer, byteLength: alignedF16Bytes(this.totalVoxels * 4) };
+  }
   async getExportInfo() {
     const readbackBytes = parameter => Math.max(
       8,

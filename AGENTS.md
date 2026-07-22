@@ -34,6 +34,7 @@ This file stores durable context for future agent work. Update it when project s
   - Render instances use direct f32 XYZ/RGBA records in a dynamically growing GPU buffer, favoring vertex throughput over packed-memory savings. Voxel-count readback is throttled, stable bind groups are cached, and model/scale replacement explicitly destroys owned GPU buffers.
 - `growing_radiance_fields` evolves a coarse 3D NCA and uses neural radiance decoding plus ray rendering. Treat it as experimental and incomplete.
 - `train_growing_voxels` imports VOX or OBJ+VOL targets, trains a 3D NCA+LPPN in-browser using f16 WebGPU forward/backward buffers plus f32 Adam master weights and moments, previews the result, and exports a package compatible with the pretrained voxel demo.
+  - The trainer keeps a scrollable full loss history and saves selectable weight-only checkpoints at a user-controlled interval. Restoring a checkpoint resets Adam moments and the state pool, then renders a fresh seed rollout; it is a new training branch rather than an exact optimizer-state resume.
 
 ## Paper concepts relevant here
 

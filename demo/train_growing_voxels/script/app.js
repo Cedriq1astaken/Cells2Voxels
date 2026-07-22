@@ -2,7 +2,7 @@ import { OrbitCamera } from './camera.js?v=18';
 import { exportTrainerModel } from './exporter.js?v=19';
 import { configureCanvas, initGPU } from './gpu.js?v=18';
 import { VoxelRenderer } from './renderer.js?v=19';
-import { VoxelTrainer } from './trainer.js?v=20';
+import { VoxelTrainer } from './trainer.js?v=21';
 import { parseObjAndVol, parseVox } from './voxelizer.js?v=18';
 
 const ui = Object.fromEntries([
@@ -13,7 +13,8 @@ const ui = Object.fromEntries([
   'cfg-res', 'cfg-native-res', 'val-res', 'cfg-scale', 'cfg-channels', 'val-channels',
   'cfg-width', 'cfg-lr', 'val-lr', 'cfg-step-min', 'cfg-step-max', 'val-steps',
   'cfg-seed-radius', 'val-seed-radius',
-  'right-panel', 'loss-chart', 'loss-current', 'loss-min', 'loss-max',
+  'right-panel', 'loss-scroll', 'loss-timeline', 'loss-chart', 'loss-current', 'loss-min', 'loss-max',
+  'checkpoint-track', 'cfg-checkpoint-interval', 'val-checkpoint-interval',
 ].map(id => [camelCase(id), document.getElementById(id)]));
 
 let device = null;
@@ -27,7 +28,10 @@ let trainerDirty = true;
 let parsedTarget = null;
 let renderRequested = true;
 const lossHistory = [];
-const MAX_LOSS_POINTS = 180;
+const checkpoints = [];
+let checkpointCapturePending = false;
+let nextCheckpointIteration = 256;
+let selectedCheckpoint = null;
 
 const uploaded = { vox: null, obj: null, vol: null };
 
@@ -75,6 +79,12 @@ function setupUI() {
   });
   ui.cfgSeedRadius.addEventListener('input', () => {
     ui.valSeedRadius.textContent = ui.cfgSeedRadius.value;
+  });
+  ui.cfgCheckpointInterval.addEventListener('input', () => {
+    ui.valCheckpointInterval.textContent = ui.cfgCheckpointInterval.value;
+  });
+  ui.cfgCheckpointInterval.addEventListener('change', () => {
+    nextCheckpointIteration = (trainer?.iteration ?? 0) + Number(ui.cfgCheckpointInterval.value);
   });
   const updateSteps = () => {
     const low = Math.min(Number(ui.cfgStepMin.value), Number(ui.cfgStepMax.value));
@@ -224,6 +234,7 @@ async function ensureTrainer() {
       ui.statIter.textContent = stats.iteration.toLocaleString();
       ui.statLoss.textContent = formatLoss(stats.loss);
       recordLoss(stats.iteration, stats.loss);
+      maybeCaptureCheckpoint(stats);
       ui.statIps.textContent = stats.iterationsPerSecond.toFixed(2);
       if (stats.preview) {
         renderer.updateVoxelBuffer(stats.preview.buffer, stats.preview.byteLength);
@@ -547,20 +558,84 @@ function resetStats() {
   ui.statIter.textContent = '0';
   ui.statVoxels.textContent = parsedTarget ? countActive(parsedTarget.target).toLocaleString() : '0';
   lossHistory.length = 0;
+  checkpoints.length = 0;
+  selectedCheckpoint = null;
+  checkpointCapturePending = false;
+  nextCheckpointIteration = Number(ui.cfgCheckpointInterval.value);
   drawLossChart();
 }
 
 function recordLoss(iteration, loss) {
   if (!Number.isFinite(loss)) return;
   lossHistory.push({ iteration, loss });
-  if (lossHistory.length > MAX_LOSS_POINTS) lossHistory.shift();
   ui.lossCurrent.textContent = formatLoss(loss);
   drawLossChart();
+  requestAnimationFrame(() => {
+    if (ui.lossScroll) ui.lossScroll.scrollLeft = ui.lossScroll.scrollWidth;
+  });
 }
 
+async function maybeCaptureCheckpoint(stats) {
+  if (!trainer || checkpointCapturePending || stats.iteration < nextCheckpointIteration) return;
+  nextCheckpointIteration = stats.iteration + Number(ui.cfgCheckpointInterval.value);
+  checkpointCapturePending = true;
+  try {
+    const snapshot = await trainer.captureWeights();
+    checkpoints.push({ ...snapshot, loss: stats.loss, historyIndex: Math.max(0, lossHistory.length - 1) });
+    drawLossChart();
+  } catch (error) {
+    console.error('Checkpoint capture failed:', error);
+    setStatus(`Checkpoint failed: ${error.message}`, 'error');
+  } finally {
+    checkpointCapturePending = false;
+  }
+}
+
+async function loadCheckpoint(checkpoint) {
+  if (!trainer || checkpointCapturePending) return;
+  showLoading(`Loading weights from step ${checkpoint.iteration.toLocaleString()}`);
+  try {
+    await trainer.stop();
+    const preview = await trainer.restoreWeights(checkpoint);
+    renderer.updateVoxelBuffer(preview.buffer, preview.byteLength);
+    selectedCheckpoint = checkpoint;
+    ui.statIter.textContent = checkpoint.iteration.toLocaleString();
+    ui.statLoss.textContent = formatLoss(checkpoint.loss);
+    ui.lossCurrent.textContent = formatLoss(checkpoint.loss);
+    nextCheckpointIteration = checkpoint.iteration + Number(ui.cfgCheckpointInterval.value);
+    setTrainingControls(false);
+    requestRender();
+    drawLossChart();
+    setStatus(`Loaded checkpoint ${checkpoint.iteration.toLocaleString()} - optimizer and pool reset`, 'ready');
+  } catch (error) {
+    console.error(error);
+    setStatus(`Checkpoint load failed: ${error.message}`, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+function drawCheckpointDots(timelineWidth) {
+  if (!ui.checkpointTrack) return;
+  ui.checkpointTrack.innerHTML = '';
+  const denominator = Math.max(1, lossHistory.length - 1);
+  for (const checkpoint of checkpoints) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `checkpoint-dot${checkpoint === selectedCheckpoint ? ' is-selected' : ''}`;
+    button.style.left = `${checkpoint.historyIndex / denominator * timelineWidth}px`;
+    button.title = `Load step ${checkpoint.iteration.toLocaleString()} (loss ${formatLoss(checkpoint.loss)})`;
+    button.setAttribute('aria-label', button.title);
+    button.addEventListener('click', () => loadCheckpoint(checkpoint));
+    ui.checkpointTrack.appendChild(button);
+  }
+}
 function drawLossChart() {
   const canvas = ui.lossChart;
   if (!canvas) return;
+  const minWidth = ui.lossScroll?.clientWidth || 1;
+  const timelineWidth = Math.max(minWidth, lossHistory.length * 4);
+  if (ui.lossTimeline) ui.lossTimeline.style.width = `${timelineWidth}px`;
   const rect = canvas.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.floor(rect.width * dpr));
@@ -588,6 +663,7 @@ function drawLossChart() {
   if (!lossHistory.length) {
     ui.lossMin.textContent = '-';
     ui.lossMax.textContent = '-';
+    drawCheckpointDots(timelineWidth);
     context.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
@@ -609,6 +685,7 @@ function drawLossChart() {
   context.stroke();
   ui.lossMin.textContent = formatLoss(min);
   ui.lossMax.textContent = formatLoss(max);
+  drawCheckpointDots(timelineWidth);
   context.setTransform(1, 0, 0, 1, 0, 0);
 }
 

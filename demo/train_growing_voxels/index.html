@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=18">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 
@@ -25,6 +25,7 @@
           id="stat-memory">-</span></div>
     </div>
     <div class="top-actions">
+      <a class="top-btn top-link" href="../growing_voxels/">DEMO</a>
       <button id="btn-start" class="top-btn is-primary" type="button" disabled>START</button>
       <button id="btn-stop" class="top-btn" type="button" disabled>STOP</button>
       <button id="btn-reset" class="top-btn" type="button" disabled>RESET</button>
@@ -111,10 +112,10 @@
       </section>
 
       <section class="panel-section compact-section">
-        <label for="cfg-step-min">ROLLOUT <span id="val-steps" class="slider-val">8-24</span></label>
+        <label for="cfg-step-min">ROLLOUT <span id="val-steps" class="slider-val">8-16</span></label>
         <div class="range-pair">
           <input type="range" id="cfg-step-min" min="8" max="96" step="8" value="8">
-          <input type="range" id="cfg-step-max" min="8" max="96" step="8" value="24">
+          <input type="range" id="cfg-step-max" min="8" max="96" step="8" value="16">
         </div>
       </section>
 
@@ -129,13 +130,22 @@
         <span id="loss-current" class="panel-value">-</span>
       </div>
       <section class="loss-panel">
-        <canvas id="loss-chart" aria-label="Live training loss chart"></canvas>
+        <div id="loss-scroll" class="loss-scroll">
+          <div id="loss-timeline" class="loss-timeline">
+            <canvas id="loss-chart" aria-label="Live training loss chart"></canvas>
+            <div id="checkpoint-track" class="checkpoint-track" aria-label="Saved checkpoints"></div>
+          </div>
+        </div>
         <div class="loss-range"><span id="loss-min">-</span><span id="loss-max">-</span></div>
+      </section>
+      <section class="panel-section compact-section checkpoint-control">
+        <label for="cfg-checkpoint-interval">SAVE WEIGHTS EVERY <span id="val-checkpoint-interval" class="slider-val">256</span></label>
+        <input type="range" id="cfg-checkpoint-interval" min="64" max="2048" step="64" value="256">
       </section>
     </aside>
   </div>
 
-  <script type="module" src="script/app.js?v=23"></script>
+  <script type="module" src="script/app.js?v=25"></script>
 </body>
 
 </html>
