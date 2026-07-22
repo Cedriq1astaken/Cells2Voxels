@@ -7,9 +7,6 @@ A browser-based set of 3D morphogenesis unofficial demos inspired by [Neural Cel
 
 ![Demo gif](/misc/demo.gif)
 
-![Demo front page](/misc/demo.png)
-
-
 ## Demos
 
 - `demo/growing_voxels/` - evolve and interact with pretrained voxel NCAs.
