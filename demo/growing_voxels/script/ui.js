@@ -86,6 +86,12 @@ export class UI {
       this.els.btnControls.setAttribute('aria-expanded', String(!collapsed));
     });
 
+    if (window.matchMedia('(max-width: 700px)').matches) {
+      this.els.leftPanel?.classList.add('is-collapsed');
+      this.els.btnControls?.classList.remove('is-active');
+      this.els.btnControls?.setAttribute('aria-expanded', 'false');
+    }
+
     for (const name of ['sliderSimRate', 'sliderDamageR', 'sliderRotateX', 'sliderRotateY', 'sliderRotateZ']) {
       this.els[name]?.addEventListener('input', () => this._updateSliderValues());
     }

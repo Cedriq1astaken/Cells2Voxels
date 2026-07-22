@@ -66,6 +66,12 @@ function setupUI() {
     ui.btnControls.setAttribute('aria-expanded', String(!collapsed));
   });
 
+  if (window.matchMedia('(max-width: 700px)').matches) {
+    ui.leftPanel.classList.add('is-collapsed');
+    ui.btnControls.classList.remove('is-active');
+    ui.btnControls.setAttribute('aria-expanded', 'false');
+  }
+
   ui.cfgRes.addEventListener('input', () => {
     ui.valRes.textContent = ui.cfgRes.value;
     ui.cfgNativeRes.checked = false;
