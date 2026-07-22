@@ -1,11 +1,14 @@
 # Cells2Voxels
 
-A browser-based set of 3D morphogenesis unofficial demos inspired by [Neural Cellular Automata: From Cells to Pixels](https://arxiv.org/html/2506.22899v2).
+A browser-based set of 3D morphogenesis unofficial demos inspired by [Neural Cellular Automata: From Cells to Pixels](https://arxiv.org/html/2506.22899v2) (Pajouheshgar et al., 2025).
 
-
-![DEMO front page](/misc/demo.gif)
 
 [Launch the live demo](https://cedriq1astaken.github.io/Cells2Voxels/demo/growing_voxels/) · [Open the training demo](https://cedriq1astaken.github.io/Cells2Voxels/demo/train_growing_voxels/)
+
+![Demo gif](/misc/demo.gif)
+
+![Demo front page](/misc/demo.png)
+
 
 ## Demos
 
