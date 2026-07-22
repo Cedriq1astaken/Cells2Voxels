@@ -1,7 +1,9 @@
 # Cells2Voxels
 
-A browser-based set of 3D morphogenesis unofficial Put demos inspired by [Neural Cellular Automata: From Cells to Pixels](https://arxiv.org/html/2506.22899v2).
-![DEMO front page](/misc/demo.png)
+A browser-based set of 3D morphogenesis unofficial demos inspired by [Neural Cellular Automata: From Cells to Pixels](https://arxiv.org/html/2506.22899v2).
+
+
+![DEMO front page](/misc/demo.gif)
 
 [Launch the live demo](https://cedriq1astaken.github.io/Cells2Voxels/demo/growing_voxels/) · [Open the training demo](https://cedriq1astaken.github.io/Cells2Voxels/demo/train_growing_voxels/)
 
@@ -36,7 +38,7 @@ A quick warning: this is still an experimental browser demo, not a replacement f
 
 ### Growing Radiance Fields
 
-- [ ] Explore a version where the 3D NCA grows a radiance field instead of a voxel model. 
+- [ ] Explore a version where the 3D NCA grows a radiance field instead of a voxel model. Not sure whether it would run on browser yet tho
 
 ## Notebooks
 
